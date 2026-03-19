@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="E_SparkplugDataType" Id="{a1b2c3d4-e5f6-7890-abcd-111111111111}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'to_string'}
+// Sparkplug B data type codes as defined in the specification.
+// These are written into the `datatype` field (field 4) of every Metric.
+TYPE E_SparkplugDataType :
+(
+	Unknown  := 0,
+	Int8     := 1,
+	Int16    := 2,
+	Int32    := 3,
+	Int64    := 4,
+	UInt8    := 5,
+	UInt16   := 6,
+	UInt32   := 7,
+	UInt64   := 8,
+	Float    := 9,
+	Double   := 10,
+	Boolean  := 11,
+	String_   := 12,
+	DateTime := 13,
+	Text     := 14,
+	UUID     := 15,
+	DataSet  := 16,
+	Bytes    := 17,
+	File_    := 18,   // 'File' is a reserved word in some TwinCAT versions
+	Template := 19
+);
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

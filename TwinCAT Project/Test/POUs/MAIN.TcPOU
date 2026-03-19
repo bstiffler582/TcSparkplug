@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="MAIN" Id="{9de1eff4-ff5a-4af7-8ca5-9fc8464e4f9b}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[PRG_ProtoTests();
+PRG_SparkplugPayloadTests();]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

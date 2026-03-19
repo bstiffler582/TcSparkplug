@@ -1,0 +1,343 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_SparkplugSession" Id="{eeeeeeee-ffff-0000-1111-222222222222}" SpecialFunc="None">
+    <Declaration><![CDATA[// Sparkplug B session manager.
+//
+// Manages the full Sparkplug lifecycle: MQTT connection, Will registration,
+// NBIRTH/NDEATH sequencing, rebirth on command, and reconnection with backoff.
+//
+// Caller responsibilities:
+//   - Declare nBdSeq as RETAIN so it survives power cycles.
+//   - Call this FB every PLC cycle regardless of state.
+//   - When bBirthRequired rises, publish DBIRTH for every device in the same cycle.
+//   - Use GetNextSeq() and Publish() for all outbound data messages.
+//
+// NOTE: The MQTT client calls (Connect, Subscribe, Publish) target the
+// Beckhoff TF6701 Tc3_IotBase FB_IotMqttClient API. Verify method signatures
+// against your installed TF6701 version if compile errors occur.
+FUNCTION_BLOCK FB_SparkplugSession
+VAR_INPUT
+	sGroupId		: STRING(127);
+	sNodeId			: STRING(127);
+	sBrokerHost		: STRING(255);
+	nBrokerPort		: UINT := 1883;
+	nKeepAliveS		: UINT := 60;		// MQTT keep-alive, seconds
+	bEnable			: BOOL;
+END_VAR
+VAR_OUTPUT
+	eState			: E_SparkplugState;
+	bOnline			: BOOL;
+	bBirthRequired	: BOOL;				// TRUE for one cycle — publish DBIRTH on this cycle
+	bError			: BOOL;
+	sErrorMsg		: STRING(255);
+END_VAR
+VAR_IN_OUT
+	// IMPORTANT: declare this variable as RETAIN in the calling program.
+	// It must survive power cycles to satisfy the Sparkplug B specification.
+	nBdSeq			: ULINT;
+END_VAR
+VAR
+	_fbMqttClient	: FB_IotMqttClient;
+
+	_fbNDeath		: FB_NDeathBuilder;
+	_fbNBirth		: FB_NBirthBuilder;
+
+	_nSeq			: ULINT;			// 0–255 wrapping; reset to 0 on NBIRTH, 1 after
+	_bConnect		: BOOL;
+
+	// Cached topic strings (built once on enable)
+	_sNbirthTopic	: STRING(255);
+	_sNdeathTopic	: STRING(255);
+	_sNcmdTopic		: STRING(255);
+
+	// MQTT Will — must remain stable in memory while the connection is live
+	_stWill			: ST_IotMqttWill;
+
+	// Reconnect backoff
+	_tReconnect		: TON;
+
+	// One-shot flags
+	_bLastEnable		: BOOL;
+	_bBirthSignalled	: BOOL;		// TRUE after bBirthRequired was set high this birth cycle
+	_bRebirthPending	: BOOL;		// Set by NCMD handler; causes Online→Birthing transition
+	_bWasOnline			: BOOL;		// TRUE if connection dropped from Online or Birthing
+
+	// Inbound message processing
+	_fbMsg			: FB_IotMqttMessage;
+	_fbMsgQueue 	: FB_IotMqttMessageQueue;
+	_sMsgTopic		: STRING(255);
+	_fbReader		: FB_ProtoReader;
+	_fbInnerReader	: FB_ProtoReader;
+	_pMetricData	: POINTER TO BYTE;
+	_nMetricLen		: UDINT;
+	_sMetricName	: STRING(255);
+	_bMetricBool	: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[_fbMqttClient.Execute(_bConnect);
+
+bOnline := (eState = E_SparkplugState.Online);
+bError  := _fbMqttClient.bError;
+
+// ── State machine ─────────────────────────────────────────────────────────────
+CASE eState OF
+
+// ─────────────────────────────────────────────────────────────────────────────
+E_SparkplugState.Idle:
+	bBirthRequired  := FALSE;
+	_bBirthSignalled := FALSE;
+	_bWasOnline      := FALSE;
+
+	IF bEnable AND NOT _bLastEnable THEN
+		_sNbirthTopic := F_BuildSparkplugTopic(E_SparkplugMessageType.NBIRTH, sGroupId, sNodeId, '');
+		_sNdeathTopic := F_BuildSparkplugTopic(E_SparkplugMessageType.NDEATH, sGroupId, sNodeId, '');
+		_sNcmdTopic   := F_BuildSparkplugTopic(E_SparkplugMessageType.NCMD,   sGroupId, sNodeId, '');
+		sErrorMsg     := '';
+		beginConnect();
+		eState := E_SparkplugState.Connecting;
+	END_IF
+
+// ─────────────────────────────────────────────────────────────────────────────
+E_SparkplugState.Connecting:
+	IF NOT bEnable THEN
+		_bConnect := FALSE;
+		eState := E_SparkplugState.Idle;
+
+	ELSIF _fbMqttClient.bError THEN
+		sErrorMsg := 'Connect failed';
+		// bdSeq does NOT increment here — the Will was never registered with a broker
+		_tReconnect(IN := FALSE);
+		eState := E_SparkplugState.Reconnecting;
+
+	ELSIF _fbMqttClient.bConnected THEN
+		// Subscribe to node commands and primary application state
+		_fbMqttClient.ipMessageQueue := _fbMsgQueue;
+		_fbMqttClient.Subscribe(_sNcmdTopic,        1);
+		_fbMqttClient.Subscribe('spBv1.0/STATE/#',  1);
+		eState := E_SparkplugState.Birthing;
+	END_IF
+
+// ─────────────────────────────────────────────────────────────────────────────
+E_SparkplugState.Birthing:
+	IF NOT bEnable OR _fbMqttClient.bError OR NOT _fbMqttClient.bConnected THEN
+		// Connection dropped while birthing — Will has been registered so bdSeq must advance
+		nBdSeq := (nBdSeq + 1) MOD 256;
+		_bBirthSignalled := FALSE;
+		_tReconnect(IN := FALSE);
+		IF NOT bEnable THEN
+			_bCOnnect := FALSE;
+			eState := E_SparkplugState.Idle;
+		ELSE
+			sErrorMsg := 'Connection lost during birth';
+			eState    := E_SparkplugState.Reconnecting;
+		END_IF
+
+	ELSIF NOT _bBirthSignalled THEN
+		// First half of birth cycle: publish NBIRTH and raise the birth flag
+		_nSeq := 0;
+		_fbNBirth.Build(F_GetUnixTimestampMs(), nBdSeq);
+		_fbMqttClient.Publish(
+			sTopic       := _sNbirthTopic,
+			pPayload     := _fbNBirth.Payload.Buffer,
+			nPayloadSize := _fbNBirth.Payload.Length,
+			eQos         := TcIotMqttQos.AtLeastOnceDelivery,
+			bRetain      := FALSE);
+		_nSeq            := 1;		// First DBIRTH will use seq=1
+		bBirthRequired   := TRUE;
+		_bBirthSignalled := TRUE;
+
+	ELSE
+		// Second half: device FBs have had one cycle to see bBirthRequired — go Online
+		bBirthRequired   := FALSE;
+		_bBirthSignalled := FALSE;
+		_bWasOnline      := TRUE;
+		eState           := E_SparkplugState.Online;
+	END_IF
+
+// ─────────────────────────────────────────────────────────────────────────────
+E_SparkplugState.Online:
+	IF NOT bEnable THEN
+		_bConnect := FALSE;
+		nBdSeq := (nBdSeq + 1) MOD 256;
+		eState := E_SparkplugState.Idle;
+
+	ELSIF _fbMqttClient.bError OR NOT _fbMqttClient.bConnected THEN
+		sErrorMsg := 'Connection lost';
+		nBdSeq    := (nBdSeq + 1) MOD 256;
+		_tReconnect(IN := FALSE);
+		eState := E_SparkplugState.Reconnecting;
+
+	ELSIF _bRebirthPending THEN
+		// Soft rebirth (triggered by NCMD or STATE recovery) — bdSeq does NOT change
+		_bRebirthPending := FALSE;
+		_bBirthSignalled := FALSE;
+		eState           := E_SparkplugState.Birthing;
+
+	ELSE
+		pollMessages();
+	END_IF
+
+// ─────────────────────────────────────────────────────────────────────────────
+E_SparkplugState.Reconnecting:
+	_tReconnect(IN := TRUE, PT := T#5S);
+
+	IF NOT bEnable THEN
+		_tReconnect(IN := FALSE);
+		eState := E_SparkplugState.Idle;
+
+	ELSIF _tReconnect.Q THEN
+		_tReconnect(IN := FALSE);
+		beginConnect();
+		eState := E_SparkplugState.Connecting;
+	END_IF
+
+END_CASE
+
+_bLastEnable := bEnable;
+]]></ST>
+    </Implementation>
+    <Method Name="beginConnect" Id="{11111111-0000-0000-0000-000000000010}">
+      <Declaration><![CDATA[// Builds the NDEATH Will payload from the current nBdSeq, then initiates
+// the MQTT connection. nBdSeq must already be at the correct value for this
+// connection before this method is called.
+METHOD PRIVATE beginConnect
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Build NDEATH — this becomes the MQTT Will payload.
+// The broker will publish it automatically on ungraceful disconnect.
+_fbNDeath.Build(nBdSeq);
+
+_stWill.sTopic			:= _sNdeathTopic;
+_stWill.pPayload     	:= _fbNDeath.PayloadBuffer;
+_stWill.nPayloadSize 	:= _fbNDeath.PayloadLength;
+_stWill.eQos         	:= TcIotMqttQos.AtLeastOnceDelivery;
+_stWill.bRetain      	:= FALSE;
+
+// TF6701 FB_IotMqttClient.Connect — verify parameter names against your version.
+_fbMqttClient.sHostName 	:= sBrokerHost;
+_fbMqttClient.nHostPort		:= nBrokerPort;
+_fbMqttClient.nKeepAlive	:= nKeepAliveS;
+_fbMqttClient.stWill 		:= _stWill;
+_fbMqttClient.stTLS.bNoServerCertCheck	:= TRUE;
+
+_bConnect := TRUE;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="GetNextSeq" Id="{11111111-0000-0000-0000-000000000001}">
+      <Declaration><![CDATA[// Returns the current seq value and advances the counter (0–255 wrapping).
+// Device FBs must call this once per published message to stamp the payload header.
+METHOD GetNextSeq : ULINT
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[GetNextSeq := _nSeq;
+_nSeq      := (_nSeq + 1) MOD 256;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="handleNcmd" Id="{11111111-0000-0000-0000-000000000012}">
+      <Declaration><![CDATA[// Parses an NCMD payload. Sets _bRebirthPending if Node Control/Rebirth = TRUE.
+// All other node commands are ignored here; device DCMDs are handled by device FBs.
+METHOD PRIVATE handleNcmd
+VAR_INPUT
+	pPayload	: PVOID;
+	nLen		: UDINT;
+END_VAR
+VAR
+	pMetric		: POINTER TO BYTE;
+	nMetricLen	: UDINT;
+	sName		: STRING(255);
+	bBoolVal	: BOOL;
+	bGotName	: BOOL;
+	bGotBool	: BOOL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Decode the outer Payload message — we only care about Metric entries (field 2)
+_fbReader.Init(pPayload, nLen);
+WHILE _fbReader.Next() DO
+	IF _fbReader.FieldNumber = 2 THEN
+		_fbReader.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+		// Decode the inner Metric message
+		sName    := '';
+		bBoolVal := FALSE;
+		bGotName := FALSE;
+		bGotBool := FALSE;
+
+		_fbInnerReader.Init(pMetric, nMetricLen);
+		WHILE _fbInnerReader.Next() DO
+			CASE _fbInnerReader.FieldNumber OF
+				1:	// name
+					_fbInnerReader.ReadString(sValue => sName);
+					bGotName := TRUE;
+				14:	// boolean_value
+					_fbInnerReader.ReadBool(bValue => bBoolVal);
+					bGotBool := TRUE;
+			ELSE
+				_fbInnerReader.Skip();
+			END_CASE
+		END_WHILE
+
+		IF bGotName AND bGotBool
+			AND sName = 'Node Control/Rebirth'
+			AND bBoolVal
+		THEN
+			_bRebirthPending := TRUE;
+		END_IF
+	ELSE
+		_fbReader.Skip();
+	END_IF
+END_WHILE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="pollMessages" Id="{11111111-0000-0000-0000-000000000011}">
+      <Declaration><![CDATA[// Drains the inbound message queue for this cycle.
+// Dispatches NCMD messages to _HandleNcmd; monitors STATE for primary app loss.
+METHOD PRIVATE pollMessages
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// listen for messages
+IF _fbMsgQueue.nQueuedMessages > 0 AND _fbMsgQueue.Dequeue(_fbMsg) THEN
+	_fbMsg.GetTopic(ADR(_sMsgTopic), 255);
+	IF _sMsgTopic = _sNcmdTopic THEN
+		handleNcmd(_fbMsg.pPayload, _fbMsg.nPayloadSize);
+	ELSIF LEFT(_sMsgTopic, 14) = 'spBv1.0/STATE/' THEN
+		// A STATE=OFFLINE from the primary application means it restarted.
+		// We trigger a rebirth so the host can re-learn our metric set.
+		// Full STATE payload parsing (JSON) is beyond scope here — a
+		// reconnected primary app will issue a rebirth command anyway.
+		_bRebirthPending := TRUE;
+	END_IF
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Publish" Id="{11111111-0000-0000-0000-000000000002}">
+      <Declaration><![CDATA[// Publishes a pre-encoded payload. Device FBs use this to send DBIRTH and DDATA.
+// Only call when bOnline is TRUE or bBirthRequired is TRUE.
+METHOD Publish : BOOL
+VAR_INPUT
+	sTopic		: STRING(255);
+	pPayload	: POINTER TO BYTE;
+	nLen		: UDINT;
+	nQos		: UDINT := 1;
+	bRetain		: BOOL  := FALSE;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF eState = E_SparkplugState.Online OR eState = E_SparkplugState.Birthing THEN
+	Publish := _fbMqttClient.Publish(
+		sTopic       := sTopic,
+		pPayload     := pPayload,
+		nPayloadSize := nLen,
+		eQos         := UDINT_TO_SINT(nQos),
+		bRetain      := bRetain);
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

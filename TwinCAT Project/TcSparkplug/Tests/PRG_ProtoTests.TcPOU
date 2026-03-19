@@ -1,0 +1,283 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="PRG_ProtoTests" Id="{e4f5a6b7-c8d9-0e1f-2a3b-4c5d6e7f8a9b}" SpecialFunc="None">
+    <Declaration><![CDATA[// Proto round-trip test suite.
+// Set bRun := TRUE to execute. Results appear in nPass, nFail, bAllPassed, sFirstFail.
+PROGRAM PRG_ProtoTests
+VAR
+	// Trigger
+	bRun		: BOOL;
+	_bLastRun	: BOOL;
+
+	// Results
+	nPass		: UDINT;
+	nFail		: UDINT;
+	bAllPassed	: BOOL;
+	sFirstFail	: STRING(255);
+	bRan		: BOOL;
+
+	// Shared writer / reader
+	fbW			: FB_ProtoWriter;
+	fbR			: FB_ProtoReader;
+
+	// Second writer for nested-message test
+	fbWInner	: FB_ProtoWriter;
+
+	// Buffers
+	aBuf		: ARRAY[0..511] OF BYTE;
+	aBufInner	: ARRAY[0..63]  OF BYTE;
+	aSmallBuf	: ARRAY[0..3]   OF BYTE;   // intentionally tiny for overflow test
+
+	// Known byte sequence used in the Bytes test
+	aTestBytes	: ARRAY[0..3] OF BYTE := [16#DE, 16#AD, 16#BE, 16#EF];
+
+	// Readback variables
+	nU32		: UDINT;
+	nU64		: ULINT;
+	bVal		: BOOL;
+	fVal		: REAL;
+	dVal		: LREAL;
+	sVal		: STRING(255);
+	pBytes		: POINTER TO BYTE;
+	nBytesLen	: UDINT;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// Run once per rising edge of bRun
+IF NOT (bRun AND NOT _bLastRun) THEN
+	_bLastRun := bRun;
+	RETURN;
+END_IF
+_bLastRun := bRun;
+
+nPass      := 0;
+nFail      := 0;
+sFirstFail := '';
+bRan       := FALSE;
+
+// ── T01: UInt32 — single-byte varint (value fits in 7 bits) ──────────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteUInt32(1, 5);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbR.FieldNumber = 1 AND nU32 = 5 AND NOT fbR.HasError,
+	sTestName  := 'T01 UInt32 single-byte varint',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T02: UInt32 — multi-byte varint (value > 127, needs 2 bytes) ─────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteUInt32(2, 300);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbR.FieldNumber = 2 AND nU32 = 300 AND NOT fbR.HasError,
+	sTestName  := 'T02 UInt32 multi-byte varint',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T03: UInt64 — Sparkplug-realistic timestamp (10-byte varint) ─────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteUInt64(3, 1700000000000);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 3 AND nU64 = 1700000000000 AND NOT fbR.HasError,
+	sTestName  := 'T03 UInt64 large value',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T04: Bool TRUE ────────────────────────────────────────────────────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteBool(4, TRUE);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadBool(bValue => bVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 4 AND bVal = TRUE AND NOT fbR.HasError,
+	sTestName  := 'T04 Bool TRUE',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T05: Bool FALSE ───────────────────────────────────────────────────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteBool(5, FALSE);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadBool(bValue => bVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 5 AND bVal = FALSE AND NOT fbR.HasError,
+	sTestName  := 'T05 Bool FALSE',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T06: Float (Fixed32 wire type) ───────────────────────────────────────────
+// 1.5 is exactly representable in IEEE 754 — safe for exact equality check.
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteFloat(6, 1.5);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadFloat(fValue => fVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 6 AND fVal = 1.5 AND NOT fbR.HasError,
+	sTestName  := 'T06 Float round-trip',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T07: Double (Fixed64 wire type) ──────────────────────────────────────────
+// 0.125 = 2^-3, exactly representable.
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteDouble(7, 0.125);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadDouble(fValue => dVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 7 AND dVal = 0.125 AND NOT fbR.HasError,
+	sTestName  := 'T07 Double round-trip',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T08: String ───────────────────────────────────────────────────────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteString(8, 'hello');
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadString(sValue => sVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 8 AND sVal = 'hello' AND NOT fbR.HasError,
+	sTestName  := 'T08 String round-trip',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T09: Bytes ────────────────────────────────────────────────────────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteBytes(9, ADR(aTestBytes), SIZEOF(aTestBytes));
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadBytes(pData => pBytes, nLen => nBytesLen);
+F_Assert(
+	bCondition := fbR.FieldNumber = 9
+		AND nBytesLen = 4
+		AND pBytes[0] = 16#DE AND pBytes[1] = 16#AD
+		AND pBytes[2] = 16#BE AND pBytes[3] = 16#EF
+		AND NOT fbR.HasError,
+	sTestName  := 'T09 Bytes round-trip',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T10: Multiple fields written and read in sequence ─────────────────────────
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteUInt32(1, 42);
+fbW.WriteBool(2, TRUE);
+fbW.WriteFloat(3, 1.5);
+fbR.Init(ADR(aBuf), fbW.Length);
+
+fbR.Next(); fbR.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbR.FieldNumber = 1 AND nU32 = 42,
+	sTestName  := 'T10a Multi-field field 1',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadBool(bValue => bVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 2 AND bVal = TRUE,
+	sTestName  := 'T10b Multi-field field 2',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadFloat(fValue => fVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 3 AND fVal = 1.5,
+	sTestName  := 'T10c Multi-field field 3',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+F_Assert(
+	bCondition := NOT fbR.Next(),
+	sTestName  := 'T10d Multi-field end of buffer',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T11: Skip ────────────────────────────────────────────────────────────────
+// Write fields 1 and 3; skip field 1 and verify field 3 is read correctly.
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteUInt32(1, 99);
+fbW.WriteFloat(2, 2.5);    // Fixed32 — exercises Skip for that wire type too
+fbW.WriteUInt32(3, 77);
+fbR.Init(ADR(aBuf), fbW.Length);
+
+fbR.Next(); fbR.Skip();   // skip UInt32
+fbR.Next(); fbR.Skip();   // skip Float
+fbR.Next(); fbR.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbR.FieldNumber = 3 AND nU32 = 77 AND NOT fbR.HasError,
+	sTestName  := 'T11 Skip fields',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T12: Nested message — minimal Sparkplug Metric inside a Payload ───────────
+// Inner: Metric { alias=1 (f2), datatype=11/Boolean (f4), boolean_value=true (f14) }
+fbWInner.Init(ADR(aBufInner), SIZEOF(aBufInner));
+fbWInner.WriteUInt64(2,  1);    // alias
+fbWInner.WriteUInt32(4, 11);    // datatype = Boolean
+fbWInner.WriteBool(14, TRUE);   // boolean_value
+
+// Outer: Payload { timestamp (f1), metrics (f2) }
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteUInt64(1, 1700000000000);
+fbW.WriteBytes(2, ADR(aBufInner), fbWInner.Length);
+
+// Decode outer payload
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next(); fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 1 AND nU64 = 1700000000000,
+	sTestName  := 'T12a Nested outer timestamp',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadBytes(pData => pBytes, nLen => nBytesLen);
+F_Assert(
+	bCondition := fbR.FieldNumber = 2 AND nBytesLen = fbWInner.Length AND NOT fbR.HasError,
+	sTestName  := 'T12b Nested metrics field',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// Re-use fbR to decode the inner metric bytes (zero-copy — pBytes points into aBuf)
+fbR.Init(pBytes, nBytesLen);
+
+fbR.Next(); fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 2 AND nU64 = 1,
+	sTestName  := 'T12c Nested metric alias',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbR.FieldNumber = 4 AND nU32 = 11,
+	sTestName  := 'T12d Nested metric datatype',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadBool(bValue => bVal);
+F_Assert(
+	bCondition := fbR.FieldNumber = 14 AND bVal = TRUE AND NOT fbR.HasError,
+	sTestName  := 'T12e Nested metric boolean_value',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T13: Writer overflow ──────────────────────────────────────────────────────
+// aSmallBuf is 4 bytes; a UInt64 field for 1700000000000 encodes to 11 bytes.
+fbW.Init(ADR(aSmallBuf), SIZEOF(aSmallBuf));
+fbW.WriteUInt64(1, 1700000000000);
+F_Assert(
+	bCondition := fbW.HasError,
+	sTestName  := 'T13 Writer overflow sets HasError',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T14: Reader wire type mismatch ───────────────────────────────────────────
+// Field is encoded as Fixed32 (Float); reading it as Varint (UInt32) must error.
+fbW.Init(ADR(aBuf), SIZEOF(aBuf));
+fbW.WriteFloat(1, 1.5);
+fbR.Init(ADR(aBuf), fbW.Length);
+fbR.Next();
+fbR.ReadUInt32(nValue => nU32);   // wrong read type
+F_Assert(
+	bCondition := fbR.HasError,
+	sTestName  := 'T14 Reader wire type mismatch sets HasError',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── Done ─────────────────────────────────────────────────────────────────────
+bAllPassed := (nFail = 0);
+bRan       := TRUE;
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,249 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ProtoWriter" Id="{04ab8747-175c-4210-9303-f7a14ac341c4}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ProtoWriter
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR
+	_pBuffer    	: POINTER TO BYTE;
+	_nCapacity  	: UDINT;
+	_nLength    	: UDINT;
+	_bError     	: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Property Name="Buffer" Id="{a1a1a1a1-b2b2-c3c3-d4d4-e5e5e5e5e5e5}">
+      <Declaration><![CDATA[// Pointer to the start of the encoded bytes. Valid until the next Init call.
+PROPERTY Buffer : POINTER TO BYTE]]></Declaration>
+      <Get Name="Get" Id="{f6f6f6f6-a7a7-b8b8-c9c9-d0d0d0d0d0d0}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Buffer := _pBuffer;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="HasError" Id="{314238dd-6eee-42f6-bdcf-e3c3aadea4f9}">
+      <Declaration><![CDATA[PROPERTY HasError : BOOL]]></Declaration>
+      <Get Name="Get" Id="{fcb31419-c09b-4143-aabb-c2d73b254ea8}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[HasError := _bError;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="Init" Id="{7b9e04db-136b-4dda-929d-c27fc11952fe}">
+      <Declaration><![CDATA[METHOD Init
+VAR_INPUT
+	pBuffer		 		: POINTER TO BYTE;
+	nCapacity			: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_pBuffer   := pBuffer;
+_nCapacity := nCapacity;
+_nLength   := 0;
+_bError    := FALSE;]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="Length" Id="{f04fe5aa-6644-4156-8899-2e8eca6bf4cc}">
+      <Declaration><![CDATA[PROPERTY Length : UDINT]]></Declaration>
+      <Get Name="Get" Id="{522ced7a-ffe5-4ee5-bfa5-717a98316592}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Length := _nLength;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="Reset" Id="{dcb2ef2c-08c0-4846-859a-6d23915ac1b7}">
+      <Declaration><![CDATA[METHOD Reset : PVOID
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_nLength := 0;
+_bError  := FALSE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteBool" Id="{156c21b2-30c8-413b-bdb2-84f74a1f38e0}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteBool : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	bValue       	: BOOL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[WriteBool := writeTag(nFieldNumber, E_ProtoWireType.Varint)
+	AND writeVarint(BOOL_TO_ULINT(bValue));]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteBytes" Id="{f6d80a59-5b99-4b8c-8754-675d4e12b293}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteBytes : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	pData        	: POINTER TO BYTE;
+	nLen         	: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[WriteBytes := writeTag(nFieldNumber, E_ProtoWireType.LengthDelimited)
+	AND writeVarint(UDINT_TO_ULINT(nLen))
+	AND writeRawBytes(pData, nLen);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteDouble" Id="{bfeefe92-e14e-42d5-b70a-866f3d07ab09}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteDouble : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	fValue       	: LREAL;
+END_VAR
+VAR
+	nRaw			: LWORD;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[MEMCPY(destAddr := ADR(nRaw), srcAddr := ADR(fValue), n := 8);
+WriteDouble := writeTag(nFieldNumber, E_ProtoWireType.Fixed64)
+	AND writeRawBytes(ADR(nRaw), 8);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteFloat" Id="{928610a2-c597-44dc-bb0c-5db4bf56c895}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteFloat : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	fValue       	: REAL;
+END_VAR
+VAR
+	nRaw			: DWORD;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[MEMCPY(destAddr := ADR(nRaw), srcAddr := ADR(fValue), n := 4);
+WriteFloat := writeTag(nFieldNumber, E_ProtoWireType.Fixed32)
+	AND writeRawBytes(ADR(nRaw), 4);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="writeRawByte" Id="{96d19778-a498-4581-89e6-cd2fe0547295}">
+      <Declaration><![CDATA[METHOD PRIVATE writeRawByte : BOOL
+VAR_INPUT
+	nByte		: BYTE;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _bError OR _nLength >= _nCapacity THEN
+	_bError := TRUE;
+	writeRawByte := FALSE;
+	RETURN;
+END_IF
+_pBuffer[_nLength] := nByte;
+_nLength := _nLength + 1;
+writeRawByte := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="writeRawBytes" Id="{d5ba1cdf-dccf-4324-b6a9-0bc2bb6c677f}">
+      <Declaration><![CDATA[METHOD PRIVATE writeRawBytes : BOOL
+VAR_INPUT
+	pData : POINTER TO BYTE;
+	nLen  : UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _bError OR (_nLength + nLen > _nCapacity) THEN
+	_bError := TRUE;
+	writeRawBytes := FALSE;
+	RETURN;
+END_IF
+MEMCPY(destAddr := _pBuffer + _nLength, srcAddr := pData, n := nLen);
+_nLength := _nLength + nLen;
+writeRawBytes := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteString" Id="{fc92f74d-e092-4e01-8280-ac8903069ea2}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteString : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	sValue       	: STRING(255);
+END_VAR
+VAR
+	nLen			: INT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[nLen := LEN(sValue);
+WriteString := writeTag(nFieldNumber, E_ProtoWireType.LengthDelimited)
+	AND writeVarint(TO_ULINT(nLen))
+	AND writeRawBytes(ADR(sValue), TO_UDINT(nLen));]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="writeTag" Id="{11904569-014c-438a-b1c0-95da59f70072}">
+      <Declaration><![CDATA[METHOD PRIVATE writeTag : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	eWireType    	: E_ProtoWireType;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[writeTag := writeVarint(
+	SHL(UDINT_TO_ULINT(nFieldNumber), 3) OR INT_TO_ULINT(TO_INT(eWireType))
+);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteUInt32" Id="{faf32b82-ad32-4dce-b276-2d0533a72c9e}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteUInt32 : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+	nValue       	: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[WriteUInt32 := writeTag(nFieldNumber, E_ProtoWireType.Varint)
+	AND writeVarint(UDINT_TO_ULINT(nValue));]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="WriteUInt64" Id="{557877d0-3fc8-474c-908e-9f5131acbe2a}">
+      <Declaration><![CDATA[METHOD PUBLIC WriteUInt64 : BOOL
+VAR_INPUT
+	nFieldNumber 	: UDINT;
+  	nValue       	: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[WriteUInt64 := writeTag(nFieldNumber, E_ProtoWireType.Varint)
+	AND writeVarint(nValue);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="writeVarint" Id="{a78d27d9-7258-4763-ae70-8b4ec8dd8ca3}">
+      <Declaration><![CDATA[METHOD PRIVATE writeVarint : BOOL
+VAR_INPUT
+	nValue		: ULINT;
+END_VAR
+VAR
+	nByte		: BYTE;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _bError THEN writeVarint := FALSE; RETURN; END_IF
+REPEAT
+	nByte  := ULINT_TO_BYTE(nValue AND 16#7F);
+	nValue := SHR(nValue, 7);
+	IF nValue <> 0 THEN
+  		nByte := nByte OR 16#80;  // more bytes follow
+	END_IF
+	IF NOT writeRawByte(nByte) THEN
+		writeVarint := FALSE;
+		RETURN;
+	END_IF
+UNTIL nValue = 0
+END_REPEAT;
+writeVarint := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

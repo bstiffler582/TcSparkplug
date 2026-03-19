@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <FileVersion>1.0.0.0</FileVersion>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{88974351-184e-4958-899d-63fa728b92f1}</ProjectGuid>
+    <SubObjectsSortedByName>true</SubObjectsSortedByName>
+    <DownloadApplicationInfo>true</DownloadApplicationInfo>
+    <WriteProductVersion>false</WriteProductVersion>
+    <GenerateTpy>false</GenerateTpy>
+    <Name>TcSparkplug</Name>
+    <ProgramVersion>3.1.4026.19</ProgramVersion>
+    <Application>{d4db6fa6-c523-4467-bed1-f7153fcae2fe}</Application>
+    <TypeSystem>{a1067c29-cdf8-43ca-9485-cf6367bb81a4}</TypeSystem>
+    <Implicit_Task_Info>{82eacd43-a8a8-4514-a657-5f18d585b041}</Implicit_Task_Info>
+    <Implicit_KindOfTask>{83440554-5530-4e2f-9d46-bd9bd7502a12}</Implicit_KindOfTask>
+    <Implicit_Jitter_Distribution>{394bafb2-b48c-445c-9512-d8fede582f32}</Implicit_Jitter_Distribution>
+    <LibraryReferences>{a3f5fd98-6562-4bae-99b4-c6611f1f3835}</LibraryReferences>
+    <Company>bstiffler582</Company>
+    <Released>false</Released>
+    <Title>TcSparkplug</Title>
+    <ProjectVersion>0.0.1</ProjectVersion>
+    <VirtualLibrary>true</VirtualLibrary>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Util\F_GetUnixTimestampMs.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Proto\Enums\E_ProtoWireType.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Proto\FB_ProtoReader.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Proto\FB_ProtoWriter.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\Enums\E_SparkplugState.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\Enums\E_SparkplugDataType.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\Enums\E_SparkplugMessageType.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\F_BuildSparkplugTopic.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\FB_DDeathBuilder.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\FB_NBirthBuilder.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\FB_NDeathBuilder.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\FB_SparkplugPayload.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\FB_SparkplugSession.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Tests\F_Assert.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Tests\PRG_ProtoTests.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Tests\PRG_SparkplugPayloadTests.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Sparkplug" />
+    <Folder Include="Sparkplug\Enums" />
+    <Folder Include="Tests" />
+    <Folder Include="Util" />
+    <Folder Include="Proto" />
+    <Folder Include="Proto\Enums" />
+  </ItemGroup>
+  <ItemGroup>
+    <PlaceholderReference Include="Tc2_Utilities">
+      <DefaultResolution>Tc2_Utilities, * (Beckhoff Automation GmbH)</DefaultResolution>
+      <Namespace>Tc2_Utilities</Namespace>
+    </PlaceholderReference>
+    <PlaceholderReference Include="Tc2_Standard">
+      <DefaultResolution>Tc2_Standard, * (Beckhoff Automation GmbH)</DefaultResolution>
+      <Namespace>Tc2_Standard</Namespace>
+    </PlaceholderReference>
+    <PlaceholderReference Include="Tc2_System">
+      <DefaultResolution>Tc2_System, * (Beckhoff Automation GmbH)</DefaultResolution>
+      <Namespace>Tc2_System</Namespace>
+    </PlaceholderReference>
+    <PlaceholderReference Include="Tc3_IotBase">
+      <DefaultResolution>Tc3_IotBase, * (Beckhoff Automation GmbH)</DefaultResolution>
+      <Namespace>Tc3_IotBase</Namespace>
+    </PlaceholderReference>
+    <PlaceholderReference Include="Tc3_Module">
+      <DefaultResolution>Tc3_Module, * (Beckhoff Automation GmbH)</DefaultResolution>
+      <Namespace>Tc3_Module</Namespace>
+      <SystemLibrary>true</SystemLibrary>
+    </PlaceholderReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="TcSparkplug.tmc">
+      <SubType>Content</SubType>
+    </None>
+  </ItemGroup>
+  <ProjectExtensions>
+    <PlcProjectOptions>
+      <XmlArchive>
+  <Data>
+    <o xml:space="preserve" t="OptionKey">
+      <v n="Name">"&lt;ProjectRoot&gt;"</v>
+      <d n="SubKeys" t="Hashtable" ckt="String" cvt="OptionKey">
+        <v>{192FAD59-8248-4824-A8DE-9177C94C195A}</v>
+        <o>
+          <v n="Name">"{192FAD59-8248-4824-A8DE-9177C94C195A}"</v>
+          <d n="SubKeys" t="Hashtable" />
+          <d n="Values" t="Hashtable" />
+        </o>
+        <v>{246001F4-279D-43AC-B241-948EB31120E1}</v>
+        <o>
+          <v n="Name">"{246001F4-279D-43AC-B241-948EB31120E1}"</v>
+          <d n="SubKeys" t="Hashtable" />
+          <d n="Values" t="Hashtable" />
+        </o>
+        <v>{29BD8D0C-3586-4548-BB48-497B9A01693F}</v>
+        <o>
+          <v n="Name">"{29BD8D0C-3586-4548-BB48-497B9A01693F}"</v>
+          <d n="SubKeys" t="Hashtable" ckt="String" cvt="OptionKey">
+            <v>NamingConventions</v>
+            <o>
+              <v n="Name">"NamingConventions"</v>
+              <d n="SubKeys" t="Hashtable" />
+              <d n="Values" t="Hashtable" />
+            </o>
+            <v>Rules</v>
+            <o>
+              <v n="Name">"Rules"</v>
+              <d n="SubKeys" t="Hashtable" />
+              <d n="Values" t="Hashtable" />
+            </o>
+          </d>
+          <d n="Values" t="Hashtable" />
+        </o>
+        <v>{40450F57-0AA3-4216-96F3-5444ECB29763}</v>
+        <o>
+          <v n="Name">"{40450F57-0AA3-4216-96F3-5444ECB29763}"</v>
+          <d n="SubKeys" t="Hashtable" />
+          <d n="Values" t="Hashtable" />
+        </o>
+        <v>{8A0FB252-96EB-4DCC-A5B4-B4804D05E2D6}</v>
+        <o>
+          <v n="Name">"{8A0FB252-96EB-4DCC-A5B4-B4804D05E2D6}"</v>
+          <d n="SubKeys" t="Hashtable" />
+          <d n="Values" t="Hashtable" ckt="String" cvt="Boolean">
+            <v>WriteLineIDs</v>
+            <v>False</v>
+          </d>
+        </o>
+        <v>{8F99A816-E488-41E4-9FA3-846536012284}</v>
+        <o>
+          <v n="Name">"{8F99A816-E488-41E4-9FA3-846536012284}"</v>
+          <d n="SubKeys" t="Hashtable" />
+          <d n="Values" t="Hashtable" ckt="String" cvt="String">
+            <v>DisabledWarningIds</v>
+            <v>410,5410</v>
+          </d>
+        </o>
+        <v>{F66C7017-BDD8-4114-926C-81D6D687E35F}</v>
+        <o>
+          <v n="Name">"{F66C7017-BDD8-4114-926C-81D6D687E35F}"</v>
+          <d n="SubKeys" t="Hashtable" />
+          <d n="Values" t="Hashtable" ckt="String" cvt="Boolean">
+            <v>CalcActiveTransOnly</v>
+            <v>True</v>
+          </d>
+        </o>
+      </d>
+      <d n="Values" t="Hashtable" />
+    </o>
+  </Data>
+  <TypeList>
+    <Type n="Boolean">System.Boolean</Type>
+    <Type n="Hashtable">System.Collections.Hashtable</Type>
+    <Type n="OptionKey">{54dd0eac-a6d8-46f2-8c27-2f43c7e49861}</Type>
+    <Type n="String">System.String</Type>
+  </TypeList>
+</XmlArchive>
+    </PlcProjectOptions>
+  </ProjectExtensions>
+</Project>

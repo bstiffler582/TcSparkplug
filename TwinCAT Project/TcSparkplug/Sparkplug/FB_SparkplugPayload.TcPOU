@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_SparkplugPayload" Id="{11111111-2222-3333-4444-555555555555}" SpecialFunc="None">
+    <Declaration><![CDATA[// Incremental Sparkplug B payload builder.
+//
+// Wraps FB_ProtoWriter with Sparkplug-aware metric write methods. The caller
+// provides an external buffer so payload capacity can be sized appropriately
+// for the message type (large for NBIRTH/DBIRTH, small for DDATA).
+//
+// Usage:
+//   fbPayload.Init(pBuffer, nCapacity);
+//   fbPayload.WriteHeader(nTimestamp, nSeq);
+//   fbPayload.WriteBoolMetric('MotorRunning', 1, E_SparkplugDataType.Boolean, TRUE);
+//   fbPayload.WriteUInt32Metric('', 2, E_SparkplugDataType.UInt32, nSpeed);  // DATA mode: no name
+//   // publish fbPayload.Buffer for fbPayload.Length bytes
+//
+// Metric name conventions:
+//   BIRTH messages  — pass the metric name; alias is also included for future DATA messages.
+//   DATA messages   — pass sName := '' to omit the name and use alias only (saves bandwidth).
+//   System metrics  — pass nAlias := 0 to omit the alias field (name-only, e.g. bdSeq).
+FUNCTION_BLOCK FB_SparkplugPayload
+VAR
+	_fbPayload		: FB_ProtoWriter;				// outer Payload message
+	_fbMetric		: FB_ProtoWriter;				// inner Metric message (reused per metric)
+	_aBufMetric		: ARRAY[0..511] OF BYTE;		// temp buffer for one encoded Metric
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// FB body intentionally empty — all logic is in the methods below.]]></ST>
+    </Implementation>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Setup
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <Method Name="Init" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000001}">
+      <Declaration><![CDATA[// Binds the payload builder to an external buffer and resets it.
+// Must be called before any Write methods.
+METHOD Init
+VAR_INPUT
+	pBuffer		: POINTER TO BYTE;
+	nCapacity	: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbPayload.Init(pBuffer, nCapacity);]]></ST>
+      </Implementation>
+    </Method>
+
+    <Method Name="Reset" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000002}">
+      <Declaration><![CDATA[// Resets the write position without re-binding the buffer.
+// Use when re-encoding into the same buffer (e.g. periodic DDATA).
+METHOD Reset
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbPayload.Reset();]]></ST>
+      </Implementation>
+    </Method>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Header
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <Method Name="WriteHeader" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000003}">
+      <Declaration><![CDATA[// Writes the Payload-level timestamp (field 1) and seq (field 4).
+// Must be the first Write call after Init/Reset.
+//
+// Sparkplug field numbers for Payload:
+//   1 = timestamp (uint64, ms since Unix epoch)
+//   4 = seq       (uint64, 0–255 wrapping)
+METHOD WriteHeader : BOOL
+VAR_INPUT
+	nTimestamp	: ULINT;
+	nSeq		: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[WriteHeader := _fbPayload.WriteUInt64(1, nTimestamp)
+	AND _fbPayload.WriteUInt64(4, nSeq);]]></ST>
+      </Implementation>
+    </Method>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Metric write methods
+         Each method encodes a complete Metric proto into _aBufMetric, then
+         appends it to the Payload as a length-delimited field 2 entry.
+
+         Sparkplug field numbers for Metric:
+            1 = name         (string,  omit in DATA messages — pass sName := '')
+            2 = alias        (uint64,  omit for system metrics — pass nAlias := 0)
+            4 = datatype     (uint32)
+           10 = int_value    (uint32)  — Int8/16/32, UInt8/16/32
+           11 = long_value   (uint64)  — Int64, UInt64, DateTime
+           12 = float_value  (float)   — Float
+           13 = double_value (double)  — Double
+           14 = boolean_value(bool)    — Boolean
+           15 = string_value (string)  — String, Text, UUID
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <Method Name="WriteBoolMetric" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000010}">
+      <Declaration><![CDATA[METHOD WriteBoolMetric : BOOL
+VAR_INPUT
+	sName		: STRING(255);
+	nAlias		: ULINT;
+	eDataType	: E_SparkplugDataType;
+	bValue		: BOOL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+IF LEN(sName) > 0  THEN _fbMetric.WriteString(1, sName); END_IF
+IF nAlias > 0      THEN _fbMetric.WriteUInt64(2, nAlias); END_IF
+_fbMetric.WriteUInt32(4, TO_UDINT(eDataType));
+_fbMetric.WriteBool(14, bValue);
+WriteBoolMetric := _fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);]]></ST>
+      </Implementation>
+    </Method>
+
+    <Method Name="WriteUInt32Metric" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000011}">
+      <Declaration><![CDATA[// For Int8, Int16, Int32, UInt8, UInt16, UInt32 — encoded in proto field 10 (int_value).
+METHOD WriteUInt32Metric : BOOL
+VAR_INPUT
+	sName		: STRING(255);
+	nAlias		: ULINT;
+	eDataType	: E_SparkplugDataType;
+	nValue		: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+IF LEN(sName) > 0  THEN _fbMetric.WriteString(1, sName); END_IF
+IF nAlias > 0      THEN _fbMetric.WriteUInt64(2, nAlias); END_IF
+_fbMetric.WriteUInt32(4, TO_UDINT(eDataType));
+_fbMetric.WriteUInt32(10, nValue);
+WriteUInt32Metric := _fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);]]></ST>
+      </Implementation>
+    </Method>
+
+    <Method Name="WriteUInt64Metric" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000012}">
+      <Declaration><![CDATA[// For Int64, UInt64, DateTime — encoded in proto field 11 (long_value).
+METHOD WriteUInt64Metric : BOOL
+VAR_INPUT
+	sName		: STRING(255);
+	nAlias		: ULINT;
+	eDataType	: E_SparkplugDataType;
+	nValue		: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+IF LEN(sName) > 0  THEN _fbMetric.WriteString(1, sName); END_IF
+IF nAlias > 0      THEN _fbMetric.WriteUInt64(2, nAlias); END_IF
+_fbMetric.WriteUInt32(4, TO_UDINT(eDataType));
+_fbMetric.WriteUInt64(11, nValue);
+WriteUInt64Metric := _fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);]]></ST>
+      </Implementation>
+    </Method>
+
+    <Method Name="WriteFloatMetric" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000013}">
+      <Declaration><![CDATA[METHOD WriteFloatMetric : BOOL
+VAR_INPUT
+	sName		: STRING(255);
+	nAlias		: ULINT;
+	eDataType	: E_SparkplugDataType;
+	fValue		: REAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+IF LEN(sName) > 0  THEN _fbMetric.WriteString(1, sName); END_IF
+IF nAlias > 0      THEN _fbMetric.WriteUInt64(2, nAlias); END_IF
+_fbMetric.WriteUInt32(4, TO_UDINT(eDataType));
+_fbMetric.WriteFloat(12, fValue);
+WriteFloatMetric := _fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);]]></ST>
+      </Implementation>
+    </Method>
+
+    <Method Name="WriteDoubleMetric" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000014}">
+      <Declaration><![CDATA[METHOD WriteDoubleMetric : BOOL
+VAR_INPUT
+	sName		: STRING(255);
+	nAlias		: ULINT;
+	eDataType	: E_SparkplugDataType;
+	fValue		: LREAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+IF LEN(sName) > 0  THEN _fbMetric.WriteString(1, sName); END_IF
+IF nAlias > 0      THEN _fbMetric.WriteUInt64(2, nAlias); END_IF
+_fbMetric.WriteUInt32(4, TO_UDINT(eDataType));
+_fbMetric.WriteDouble(13, fValue);
+WriteDoubleMetric := _fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);]]></ST>
+      </Implementation>
+    </Method>
+
+    <Method Name="WriteStringMetric" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000015}">
+      <Declaration><![CDATA[// For String, Text, UUID data types.
+METHOD WriteStringMetric : BOOL
+VAR_INPUT
+	sName		: STRING(255);
+	nAlias		: ULINT;
+	eDataType	: E_SparkplugDataType;
+	sValue		: STRING(255);
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+IF LEN(sName) > 0  THEN _fbMetric.WriteString(1, sName); END_IF
+IF nAlias > 0      THEN _fbMetric.WriteUInt64(2, nAlias); END_IF
+_fbMetric.WriteUInt32(4, TO_UDINT(eDataType));
+_fbMetric.WriteString(15, sValue);
+WriteStringMetric := _fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);]]></ST>
+      </Implementation>
+    </Method>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         Properties
+         ═══════════════════════════════════════════════════════════════════ -->
+
+    <Property Name="Buffer" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000020}">
+      <Declaration><![CDATA[// Pointer to the start of the encoded payload. Valid until the next Init call.
+PROPERTY Buffer : POINTER TO BYTE]]></Declaration>
+      <Get Name="Get" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000021}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Buffer := _fbPayload.Buffer;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+    <Property Name="Length" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000022}">
+      <Declaration><![CDATA[PROPERTY Length : UDINT]]></Declaration>
+      <Get Name="Get" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000023}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Length := _fbPayload.Length;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+    <Property Name="HasError" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000024}">
+      <Declaration><![CDATA[PROPERTY HasError : BOOL]]></Declaration>
+      <Get Name="Get" Id="{aaaaaaaa-bbbb-cccc-dddd-000000000025}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[HasError := _fbPayload.HasError;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+  </POU>
+</TcPlcObject>

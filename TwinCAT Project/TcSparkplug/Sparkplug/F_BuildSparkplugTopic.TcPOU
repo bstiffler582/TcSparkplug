@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_BuildSparkplugTopic" Id="{c3d4e5f6-a7b8-9012-cdef-333333333333}" SpecialFunc="None">
+    <Declaration><![CDATA[// Builds a Sparkplug B topic string.
+//
+// Node-level:   spBv1.0/{group_id}/{msg_type}/{node_id}
+// Device-level: spBv1.0/{group_id}/{msg_type}/{node_id}/{device_id}
+//
+// Pass sDeviceId := '' for node-level messages (NBIRTH, NDEATH, NDATA, NCMD).
+FUNCTION F_BuildSparkplugTopic : STRING(255)
+VAR_INPUT
+	eMsgType	: E_SparkplugMessageType;
+	sGroupId	: STRING(127);
+	sNodeId		: STRING(127);
+	sDeviceId	: STRING(127);
+END_VAR
+VAR
+	sMsgType	: STRING(16);
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[CASE eMsgType OF
+	E_SparkplugMessageType.NBIRTH:	sMsgType := 'NBIRTH';
+	E_SparkplugMessageType.NDEATH:	sMsgType := 'NDEATH';
+	E_SparkplugMessageType.DBIRTH:	sMsgType := 'DBIRTH';
+	E_SparkplugMessageType.DDEATH:	sMsgType := 'DDEATH';
+	E_SparkplugMessageType.NDATA:	sMsgType := 'NDATA';
+	E_SparkplugMessageType.DDATA:	sMsgType := 'DDATA';
+	E_SparkplugMessageType.NCMD:	sMsgType := 'NCMD';
+	E_SparkplugMessageType.DCMD:	sMsgType := 'DCMD';
+	ELSE							sMsgType := 'UNKNOWN';
+END_CASE
+
+F_BuildSparkplugTopic := CONCAT('spBv1.0/', sGroupId);
+F_BuildSparkplugTopic := CONCAT(F_BuildSparkplugTopic, CONCAT('/', sMsgType));
+F_BuildSparkplugTopic := CONCAT(F_BuildSparkplugTopic, CONCAT('/', sNodeId));
+
+IF LEN(sDeviceId) > 0 THEN
+	F_BuildSparkplugTopic := CONCAT(F_BuildSparkplugTopic, CONCAT('/', sDeviceId));
+END_IF
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

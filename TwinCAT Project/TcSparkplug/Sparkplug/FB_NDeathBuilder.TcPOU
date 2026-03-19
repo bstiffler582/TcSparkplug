@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_NDeathBuilder" Id="{d4e5f6a7-b8c9-0123-defa-444444444444}" SpecialFunc="None">
+    <Declaration><![CDATA[// Builds a Sparkplug B NDEATH payload.
+//
+// NDEATH is the MQTT Will message — it must be pre-built and registered with the
+// broker before the MQTT connection is established. When the broker detects an
+// ungraceful disconnect it publishes this payload automatically.
+//
+// The NDEATH payload contains exactly one metric:
+//   Metric { name: "bdSeq", datatype: UInt64, long_value: <bdSeq> }
+//
+// No timestamp and no seq field are included per the Sparkplug B specification.
+//
+// Usage:
+//   fbNDeath.Build(nBdSeq);
+//   mqttClient.SetWill(
+//     sTopic  := F_BuildSparkplugTopic(NDEATH, sGroup, sNode, ''),
+//     pPayload := fbNDeath.PayloadBuffer,
+//     nLen     := fbNDeath.PayloadLength);
+FUNCTION_BLOCK FB_NDeathBuilder
+VAR
+	// Internal buffers — owned by this FB, stable between Build() calls.
+	_aBufMetric		: ARRAY[0..31] OF BYTE;
+	_aBufPayload	: ARRAY[0..47] OF BYTE;
+
+	_fbMetric		: FB_ProtoWriter;
+	_fbPayload		: FB_ProtoWriter;
+
+	_nPayloadLength	: UDINT;
+	_bValid			: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// FB body intentionally empty — all logic is in Build().]]></ST>
+    </Implementation>
+    <Method Name="Build" Id="{e5f6a7b8-c9d0-1234-efab-555555555555}">
+      <Declaration><![CDATA[// Encodes the NDEATH payload for the given birth/death sequence number.
+// Call this once before registering the MQTT Will, and again after each
+// reconnect if the bdSeq value has changed.
+METHOD Build : BOOL
+VAR_INPUT
+	nBdSeq	: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// ── Encode the bdSeq metric ──────────────────────────────────────────────────
+// Sparkplug field numbers for Metric:
+//   1 = name (string)
+//   4 = datatype (uint32)
+//  11 = long_value (uint64) — used for UInt64 and Int64 values
+_fbMetric.Init(ADR(_aBufMetric), SIZEOF(_aBufMetric));
+_fbMetric.WriteString(1,  'bdSeq');
+_fbMetric.WriteUInt32(4,  TO_UDINT(E_SparkplugDataType.UInt64));
+_fbMetric.WriteUInt64(11, nBdSeq);
+
+// ── Encode the Payload ────────────────────────────────────────────────────────
+// Sparkplug field numbers for Payload:
+//   2 = metrics (repeated, length-delimited)
+// Intentionally omitting timestamp (f1) and seq (f4) — not required in NDEATH.
+_fbPayload.Init(ADR(_aBufPayload), SIZEOF(_aBufPayload));
+_fbPayload.WriteBytes(2, ADR(_aBufMetric), _fbMetric.Length);
+
+_bValid         := NOT _fbMetric.HasError AND NOT _fbPayload.HasError;
+_nPayloadLength := _fbPayload.Length;
+Build           := _bValid;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="IsValid" Id="{f6a7b8c9-d0e1-2345-fabc-666666666666}">
+      <Declaration><![CDATA[// TRUE if the last Build() call succeeded without buffer overflow.
+PROPERTY IsValid : BOOL]]></Declaration>
+      <Get Name="Get" Id="{a7b8c9d0-e1f2-3456-abcd-777777777777}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[IsValid := _bValid;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="PayloadBuffer" Id="{b8c9d0e1-f2a3-4567-bcde-888888888888}">
+      <Declaration><![CDATA[// Pointer to the encoded payload bytes. Valid until the next Build() call.
+PROPERTY PayloadBuffer : POINTER TO BYTE]]></Declaration>
+      <Get Name="Get" Id="{c9d0e1f2-a3b4-5678-cdef-999999999999}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[PayloadBuffer := ADR(_aBufPayload);]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="PayloadLength" Id="{d0e1f2a3-b4c5-6789-defa-aaaaaaaaaaaa}">
+      <Declaration><![CDATA[// Number of encoded bytes. Zero if Build() has not been called yet.
+PROPERTY PayloadLength : UDINT]]></Declaration>
+      <Get Name="Get" Id="{e1f2a3b4-c5d6-789a-efab-bbbbbbbbbbbb}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[PayloadLength := _nPayloadLength;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+  </POU>
+</TcPlcObject>

@@ -1,0 +1,31 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="F_Assert" Id="{b1c2d3e4-f5a6-7b8c-9d0e-1f2a3b4c5d6e}" SpecialFunc="None">
+    <Declaration><![CDATA[// Increments nPass if bCondition is TRUE, otherwise increments nFail and records
+// the name of the first failure in sFirstFail.
+FUNCTION F_Assert : BOOL
+VAR_INPUT
+	bCondition	: BOOL;
+	sTestName	: STRING(255);
+END_VAR
+VAR_IN_OUT
+	nPass		: UDINT;
+	nFail		: UDINT;
+	sFirstFail	: STRING(255);
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF bCondition THEN
+	nPass    := nPass + 1;
+	F_Assert := TRUE;
+ELSE
+	nFail := nFail + 1;
+	IF nFail = 1 THEN
+		sFirstFail := sTestName;
+	END_IF
+	F_Assert := FALSE;
+END_IF
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

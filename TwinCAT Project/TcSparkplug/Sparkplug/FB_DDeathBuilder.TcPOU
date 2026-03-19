@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_DDeathBuilder" Id="{66666666-7777-8888-9999-aaaaaaaaaaaa}" SpecialFunc="None">
+    <Declaration><![CDATA[// Builds a Sparkplug B DDEATH payload.
+//
+// DDEATH announces that a logical device is going offline. It carries only a
+// timestamp and seq — no metrics. The session manager publishes it before
+// disconnecting a device or on detecting a device fault.
+FUNCTION_BLOCK FB_DDeathBuilder
+VAR
+	_aBuf		: ARRAY[0..31] OF BYTE;
+	_fbPayload	: FB_SparkplugPayload;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// FB body intentionally empty — all logic is in Build().]]></ST>
+    </Implementation>
+
+    <Method Name="Build" Id="{77777777-8888-9999-aaaa-bbbbbbbbbbbb}">
+      <Declaration><![CDATA[METHOD Build : BOOL
+VAR_INPUT
+	nTimestamp	: ULINT;
+	nSeq		: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbPayload.Init(ADR(_aBuf), SIZEOF(_aBuf));
+_fbPayload.WriteHeader(nTimestamp, nSeq);
+Build := NOT _fbPayload.HasError;
+]]></ST>
+      </Implementation>
+    </Method>
+
+    <Property Name="Payload" Id="{88888888-9999-aaaa-bbbb-cccccccccccc}">
+      <Declaration><![CDATA[PROPERTY Payload : REFERENCE TO FB_SparkplugPayload]]></Declaration>
+      <Get Name="Get" Id="{99999999-aaaa-bbbb-cccc-dddddddddddd}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Payload REF= _fbPayload;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+  </POU>
+</TcPlcObject>

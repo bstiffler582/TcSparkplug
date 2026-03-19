@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_NBirthBuilder" Id="{22222222-3333-4444-5555-666666666666}" SpecialFunc="None">
+    <Declaration><![CDATA[// Builds the Sparkplug B NBIRTH payload.
+//
+// NBIRTH announces the edge node to the Sparkplug host. It must be published
+// immediately after the MQTT connection is established, before any DBIRTH or
+// data messages. The seq counter is reset to 0 on every NBIRTH.
+//
+// This builder writes the two mandatory Sparkplug system metrics:
+//   "bdSeq"                — UInt64, the birth/death sequence number.
+//   "Node Control/Rebirth" — Boolean, always FALSE in the birth payload.
+//                            The host writes TRUE to this metric (via NCMD)
+//                            to request a full rebirth cycle.
+//
+// Generated code calls Payload to append node-level user metrics after Build().
+//
+// Usage (session manager):
+//   fbNBirth.Build(nTimestamp, nBdSeq);
+//   // generated node-level metrics (if any):
+//   fbNBirth.Payload.WriteBoolMetric('MyNodeMetric', 1, Boolean, bValue);
+//   mqttClient.Publish(sTopic, fbNBirth.Payload.Buffer, fbNBirth.Payload.Length);
+FUNCTION_BLOCK FB_NBirthBuilder
+VAR
+	_aBuf		: ARRAY[0..2047] OF BYTE;	// 2 KB — generous for node metrics
+	_fbPayload	: FB_SparkplugPayload;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// FB body intentionally empty — all logic is in Build().]]></ST>
+    </Implementation>
+
+    <Method Name="Build" Id="{33333333-4444-5555-6666-777777777777}">
+      <Declaration><![CDATA[// Initialises the payload and writes the header + system metrics.
+// Call this once after connecting, before publishing NBIRTH.
+// After this call, append any node-level user metrics via the Payload property.
+METHOD Build : BOOL
+VAR_INPUT
+	nTimestamp	: ULINT;	// ms since Unix epoch
+	nBdSeq		: ULINT;	// birth/death sequence number (0–255 wrapping, RETAIN)
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbPayload.Init(ADR(_aBuf), SIZEOF(_aBuf));
+
+// seq is always 0 for NBIRTH — the counter resets on every birth.
+_fbPayload.WriteHeader(nTimestamp, 0);
+
+// bdSeq: no alias — the host identifies this metric by name.
+_fbPayload.WriteUInt64Metric('bdSeq', 0, E_SparkplugDataType.UInt64, nBdSeq);
+
+// Node Control/Rebirth: no alias — identified by name.
+// Value is always FALSE in the birth payload; the host sends TRUE via NCMD
+// to trigger a rebirth.
+_fbPayload.WriteBoolMetric('Node Control/Rebirth', 0, E_SparkplugDataType.Boolean, FALSE);
+
+Build := NOT _fbPayload.HasError;
+]]></ST>
+      </Implementation>
+    </Method>
+
+    <Property Name="Payload" Id="{44444444-5555-6666-7777-888888888888}">
+      <Declaration><![CDATA[// Exposes the underlying payload builder so generated code can append
+// node-level user metrics after Build() is called.
+PROPERTY Payload : REFERENCE TO FB_SparkplugPayload]]></Declaration>
+      <Get Name="Get" Id="{55555555-6666-7777-8888-999999999999}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Payload REF= _fbPayload;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+  </POU>
+</TcPlcObject>

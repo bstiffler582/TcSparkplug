@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="PRG_SparkplugPayloadTests" Id="{f0e1d2c3-b4a5-9687-7869-5a4b3c2d1e0f}" SpecialFunc="None">
+    <Declaration><![CDATA[// Sparkplug payload builder test suite.
+// Set bRun := TRUE to execute. Results in nPass, nFail, bAllPassed, sFirstFail.
+PROGRAM PRG_SparkplugPayloadTests
+VAR
+	bRun		: BOOL;
+	_bLastRun	: BOOL;
+
+	nPass		: UDINT;
+	nFail		: UDINT;
+	bAllPassed	: BOOL;
+	sFirstFail	: STRING(255);
+	bRan		: BOOL;
+
+	// Builders under test
+	fbNDeath	: FB_NDeathBuilder;
+	fbNBirth	: FB_NBirthBuilder;
+	fbDDeath	: FB_DDeathBuilder;
+
+	// Generic payload builder for metric writer tests
+	aBuf		: ARRAY[0..511] OF BYTE;
+	fbPayload	: FB_SparkplugPayload;
+
+	// Readers
+	fbR			: FB_ProtoReader;
+	fbRInner	: FB_ProtoReader;
+
+	// Readback vars
+	nU32		: UDINT;
+	nU64		: ULINT;
+	bVal		: BOOL;
+	fVal		: REAL;
+	dVal		: LREAL;
+	sVal		: STRING(255);
+	pMetric		: POINTER TO BYTE;
+	nMetricLen	: UDINT;
+
+	// Fixed test values
+	nTestTs		: ULINT := 1700000000000;	// ms — a Sparkplug-realistic timestamp
+	nTestBdSeq	: ULINT := 42;
+	nTestSeq	: ULINT := 7;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF NOT (bRun AND NOT _bLastRun) THEN
+	_bLastRun := bRun;
+	RETURN;
+END_IF
+_bLastRun := bRun;
+
+nPass      := 0;
+nFail      := 0;
+sFirstFail := '';
+bRan       := FALSE;
+
+// ════════════════════════════════════════════════════════════════════════════
+// GROUP 1 — F_BuildSparkplugTopic
+// ════════════════════════════════════════════════════════════════════════════
+
+// T01: Node-level topic — no device ID
+F_Assert(
+	bCondition := F_BuildSparkplugTopic(E_SparkplugMessageType.NBIRTH, 'Grp', 'Node', '') = 'spBv1.0/Grp/NBIRTH/Node',
+	sTestName  := 'T01 Topic node-level NBIRTH',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T02: Device-level topic — device ID appended
+F_Assert(
+	bCondition := F_BuildSparkplugTopic(E_SparkplugMessageType.DDATA, 'G', 'N', 'D') = 'spBv1.0/G/DDATA/N/D',
+	sTestName  := 'T02 Topic device-level DDATA',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T03: NCMD node-level
+F_Assert(
+	bCondition := F_BuildSparkplugTopic(E_SparkplugMessageType.NCMD, 'Plant1', 'PLC1', '') = 'spBv1.0/Plant1/NCMD/PLC1',
+	sTestName  := 'T03 Topic NCMD',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T04: NDEATH
+F_Assert(
+	bCondition := F_BuildSparkplugTopic(E_SparkplugMessageType.NDEATH, 'Grp', 'Node', '') = 'spBv1.0/Grp/NDEATH/Node',
+	sTestName  := 'T04 Topic NDEATH',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// GROUP 2 — FB_NDeathBuilder
+// Expected outer payload: f2 (metric) only — no timestamp, no seq.
+// Expected inner metric:  f1=name, f4=datatype, f11=long_value
+// ════════════════════════════════════════════════════════════════════════════
+
+fbNDeath.Build(nTestBdSeq);
+fbR.Init(fbNDeath.PayloadBuffer, fbNDeath.PayloadLength);
+
+// T05: builder reports no error
+F_Assert(
+	bCondition := fbNDeath.IsValid,
+	sTestName  := 'T05 NDeathBuilder IsValid',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T06: first (and only) outer field is the metrics field (f2) — no timestamp or seq
+fbR.Next();
+F_Assert(
+	bCondition := fbR.FieldNumber = 2,
+	sTestName  := 'T06 NDEATH outer field is metrics (f2), no header fields',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T07–T10: decode the inner bdSeq metric
+fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+fbRInner.Init(pMetric, nMetricLen);
+
+fbRInner.Next(); fbRInner.ReadString(sValue => sVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 1 AND sVal = 'bdSeq',
+	sTestName  := 'T07 NDEATH metric name = bdSeq',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 4 AND nU32 = TO_UDINT(E_SparkplugDataType.UInt64),
+	sTestName  := 'T08 NDEATH metric datatype = UInt64',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 11 AND nU64 = nTestBdSeq,
+	sTestName  := 'T09 NDEATH metric long_value = bdSeq',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+F_Assert(
+	bCondition := NOT fbRInner.Next() AND NOT fbR.Next(),
+	sTestName  := 'T10 NDEATH no extra fields in metric or payload',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// GROUP 3 — FB_NBirthBuilder
+// Expected outer payload: f1=timestamp, f4=seq(0), f2=bdSeq metric, f2=Rebirth metric
+// bdSeq metric inner:    f1=name, f4=datatype, f11=long_value  (no alias: alias=0)
+// Rebirth metric inner:  f1=name, f4=datatype, f14=boolean_value
+// ════════════════════════════════════════════════════════════════════════════
+
+fbNBirth.Build(nTestTs, nTestBdSeq);
+fbR.Init(fbNBirth.Payload.Buffer, fbNBirth.Payload.Length);
+
+// T11: builder reports no error
+F_Assert(
+	bCondition := NOT fbNBirth.Payload.HasError,
+	sTestName  := 'T11 NBirthBuilder no error',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T12–T13: outer header
+fbR.Next(); fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 1 AND nU64 = nTestTs,
+	sTestName  := 'T12 NBIRTH timestamp correct',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 4 AND nU64 = 0,
+	sTestName  := 'T13 NBIRTH seq = 0',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T14–T16: first metric — bdSeq
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+F_Assert(
+	bCondition := fbR.FieldNumber = 2,
+	sTestName  := 'T14 NBIRTH first metric field present',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.ReadString(sValue => sVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 1 AND sVal = 'bdSeq',
+	sTestName  := 'T15 NBIRTH bdSeq metric name',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+fbRInner.Next(); fbRInner.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := nU32 = TO_UDINT(E_SparkplugDataType.UInt64) AND nU64 = nTestBdSeq,
+	sTestName  := 'T16 NBIRTH bdSeq metric datatype and value',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// T17–T19: second metric — Node Control/Rebirth
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+F_Assert(
+	bCondition := fbR.FieldNumber = 2,
+	sTestName  := 'T17 NBIRTH second metric field present',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.ReadString(sValue => sVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 1 AND sVal = 'Node Control/Rebirth',
+	sTestName  := 'T18 NBIRTH Rebirth metric name',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+fbRInner.Next(); fbRInner.ReadBool(bValue => bVal);
+F_Assert(
+	bCondition := nU32 = TO_UDINT(E_SparkplugDataType.Boolean) AND bVal = FALSE,
+	sTestName  := 'T19 NBIRTH Rebirth metric datatype and value=FALSE',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+F_Assert(
+	bCondition := NOT fbR.Next(),
+	sTestName  := 'T20 NBIRTH no extra outer fields',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// GROUP 4 — FB_DDeathBuilder
+// Expected outer payload: f1=timestamp, f4=seq — no metrics follow.
+// ════════════════════════════════════════════════════════════════════════════
+
+fbDDeath.Build(nTestTs, nTestSeq);
+fbR.Init(fbDDeath.Payload.Buffer, fbDDeath.Payload.Length);
+
+fbR.Next(); fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 1 AND nU64 = nTestTs,
+	sTestName  := 'T21 DDEATH timestamp correct',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbR.Next(); fbR.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbR.FieldNumber = 4 AND nU64 = nTestSeq,
+	sTestName  := 'T22 DDEATH seq correct',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+F_Assert(
+	bCondition := NOT fbR.Next(),
+	sTestName  := 'T23 DDEATH no metrics',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// GROUP 5 — FB_SparkplugPayload metric writers
+// Helper pattern for each test:
+//   Init → WriteHeader → WriteXxxMetric → decode outer (skip f1+f4) → decode inner
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── T24–T27: WriteBoolMetric — birth mode (name + alias + datatype + value) ─
+fbPayload.Init(ADR(aBuf), SIZEOF(aBuf));
+fbPayload.WriteHeader(nTestTs, 0);
+fbPayload.WriteBoolMetric('Running', 1, E_SparkplugDataType.Boolean, TRUE);
+
+fbR.Init(fbPayload.Buffer, fbPayload.Length);
+fbR.Next(); fbR.Skip();		// f1: timestamp
+fbR.Next(); fbR.Skip();		// f4: seq
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.ReadString(sValue => sVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 1 AND sVal = 'Running',
+	sTestName  := 'T24 WriteBoolMetric name',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 2 AND nU64 = 1,
+	sTestName  := 'T25 WriteBoolMetric alias',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 4 AND nU32 = TO_UDINT(E_SparkplugDataType.Boolean),
+	sTestName  := 'T26 WriteBoolMetric datatype',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadBool(bValue => bVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 14 AND bVal = TRUE,
+	sTestName  := 'T27 WriteBoolMetric value',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T28–T29: WriteBoolMetric — data mode (no name; first field must be alias) ─
+fbPayload.Init(ADR(aBuf), SIZEOF(aBuf));
+fbPayload.WriteHeader(nTestTs, 5);
+fbPayload.WriteBoolMetric('', 3, E_SparkplugDataType.Boolean, FALSE);
+
+fbR.Init(fbPayload.Buffer, fbPayload.Length);
+fbR.Next(); fbR.Skip();
+fbR.Next(); fbR.Skip();
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next();
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 2,
+	sTestName  := 'T28 WriteBoolMetric data mode: first field is alias (no name)',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+fbRInner.ReadUInt64(nValue => nU64);
+F_Assert(
+	bCondition := nU64 = 3,
+	sTestName  := 'T29 WriteBoolMetric data mode: alias value correct',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T30–T31: WriteUInt32Metric (int_value → proto field 10) ─────────────────
+fbPayload.Init(ADR(aBuf), SIZEOF(aBuf));
+fbPayload.WriteHeader(nTestTs, 0);
+fbPayload.WriteUInt32Metric('Speed', 2, E_SparkplugDataType.UInt32, 1500);
+
+fbR.Init(fbPayload.Buffer, fbPayload.Length);
+fbR.Next(); fbR.Skip(); fbR.Next(); fbR.Skip();
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.Skip();		// f1: name
+fbRInner.Next(); fbRInner.Skip();		// f2: alias
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 4 AND nU32 = TO_UDINT(E_SparkplugDataType.UInt32),
+	sTestName  := 'T30 WriteUInt32Metric datatype',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 10 AND nU32 = 1500,
+	sTestName  := 'T31 WriteUInt32Metric int_value (f10)',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T32–T33: WriteFloatMetric (float_value → proto field 12) ────────────────
+fbPayload.Init(ADR(aBuf), SIZEOF(aBuf));
+fbPayload.WriteHeader(nTestTs, 0);
+fbPayload.WriteFloatMetric('Temp', 3, E_SparkplugDataType.Float, 2.5);
+
+fbR.Init(fbPayload.Buffer, fbPayload.Length);
+fbR.Next(); fbR.Skip(); fbR.Next(); fbR.Skip();
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.Skip();		// f1: name
+fbRInner.Next(); fbRInner.Skip();		// f2: alias
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 4 AND nU32 = TO_UDINT(E_SparkplugDataType.Float),
+	sTestName  := 'T32 WriteFloatMetric datatype',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadFloat(fValue => fVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 12 AND fVal = 2.5,
+	sTestName  := 'T33 WriteFloatMetric float_value (f12)',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T34–T35: WriteDoubleMetric (double_value → proto field 13) ──────────────
+fbPayload.Init(ADR(aBuf), SIZEOF(aBuf));
+fbPayload.WriteHeader(nTestTs, 0);
+fbPayload.WriteDoubleMetric('Pressure', 4, E_SparkplugDataType.Double, 0.125);
+
+fbR.Init(fbPayload.Buffer, fbPayload.Length);
+fbR.Next(); fbR.Skip(); fbR.Next(); fbR.Skip();
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.Skip();
+fbRInner.Next(); fbRInner.Skip();
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 4 AND nU32 = TO_UDINT(E_SparkplugDataType.Double),
+	sTestName  := 'T34 WriteDoubleMetric datatype',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadDouble(fValue => dVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 13 AND dVal = 0.125,
+	sTestName  := 'T35 WriteDoubleMetric double_value (f13)',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+// ── T36–T37: WriteStringMetric (string_value → proto field 15) ──────────────
+fbPayload.Init(ADR(aBuf), SIZEOF(aBuf));
+fbPayload.WriteHeader(nTestTs, 0);
+fbPayload.WriteStringMetric('Tag', 5, E_SparkplugDataType.String_, 'online');
+
+fbR.Init(fbPayload.Buffer, fbPayload.Length);
+fbR.Next(); fbR.Skip(); fbR.Next(); fbR.Skip();
+fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
+
+fbRInner.Init(pMetric, nMetricLen);
+fbRInner.Next(); fbRInner.Skip();
+fbRInner.Next(); fbRInner.Skip();
+fbRInner.Next(); fbRInner.ReadUInt32(nValue => nU32);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 4 AND nU32 = TO_UDINT(E_SparkplugDataType.String_),
+	sTestName  := 'T36 WriteStringMetric datatype',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+fbRInner.Next(); fbRInner.ReadString(sValue => sVal);
+F_Assert(
+	bCondition := fbRInner.FieldNumber = 15 AND sVal = 'online',
+	sTestName  := 'T37 WriteStringMetric string_value (f15)',
+	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// Done
+// ════════════════════════════════════════════════════════════════════════════
+bAllPassed := (nFail = 0);
+bRan       := TRUE;
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

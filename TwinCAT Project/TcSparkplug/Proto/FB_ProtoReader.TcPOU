@@ -1,0 +1,271 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_ProtoReader" Id="{58445b44-c673-4209-828e-f3d86dbeecec}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_ProtoReader
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+END_VAR
+VAR
+	_pBuffer      	: POINTER TO BYTE;
+	_nLength      	: UDINT;
+	_nPos         	: UDINT;
+	_nFieldNumber 	: UDINT;
+	_eWireType    	: E_ProtoWireType;
+	_bError       	: BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Property Name="FieldNumber" Id="{5bca0196-e063-4c9a-9a92-e3fda68370f5}">
+      <Declaration><![CDATA[PROPERTY FieldNumber : UDINT]]></Declaration>
+      <Get Name="Get" Id="{9c2cd125-2a7d-4671-868e-d0f1b0e904c8}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[FieldNumber := _nFieldNumber;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="HasError" Id="{b3853c20-69a8-45c2-8beb-ac8750fe733f}">
+      <Declaration><![CDATA[PROPERTY HasError : BOOL]]></Declaration>
+      <Get Name="Get" Id="{5490b62e-1618-4746-9292-7156b1c9eb95}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[HasError := _bError;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Method Name="Init" Id="{a1eeeb52-d9ac-4570-8427-94557e3e0684}">
+      <Declaration><![CDATA[METHOD Init
+VAR_INPUT
+	pBuffer 	: POINTER TO BYTE;
+	nLength 	: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_pBuffer      := pBuffer;
+_nLength      := nLength;
+_nPos         := 0;
+_nFieldNumber := 0;
+_bError       := FALSE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Next" Id="{1fbbaf88-b583-4d35-b029-7d4d7eaa353b}">
+      <Declaration><![CDATA[METHOD Next : BOOL
+VAR_INPUT
+END_VAR
+VAR
+	nTag : ULINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _bError OR _nPos >= _nLength THEN
+	Next := FALSE;
+	RETURN;
+END_IF
+IF NOT readVarintRaw(nValue => nTag) THEN
+	Next := FALSE;
+	RETURN;
+END_IF
+_nFieldNumber := ULINT_TO_UDINT(SHR(nTag, 3));
+_eWireType    := ULINT_TO_INT(nTag AND 16#07);
+Next := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadBool" Id="{cd9749e6-aefe-4fd2-9aac-54b2eafccf60}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadBool : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	bValue 		: BOOL;
+END_VAR
+VAR
+	nRaw		: ULINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _eWireType <> E_ProtoWireType.Varint THEN _bError := TRUE; RETURN; END_IF
+IF readVarintRaw(nValue => nRaw) THEN
+	bValue  := nRaw <> 0;
+	ReadBool := TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadBytes" Id="{dc34a28f-4e2d-482b-9466-d2de70404298}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadBytes : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	pData 		: POINTER TO BYTE;
+	nLen  		: UDINT;
+END_VAR
+VAR
+	nLenRaw : ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _eWireType <> E_ProtoWireType.LengthDelimited THEN _bError := TRUE; RETURN; END_IF
+IF NOT readVarintRaw(nValue => nLenRaw) THEN RETURN; END_IF
+nLen := ULINT_TO_UDINT(nLenRaw);
+IF _nPos + nLen > _nLength THEN _bError := TRUE; RETURN; END_IF
+pData     := _pBuffer + _nPos;
+_nPos     := _nPos + nLen;
+ReadBytes := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadDouble" Id="{c65f2fcc-cf45-4a25-b776-d36e72df04e3}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadDouble : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	fValue 		: LREAL;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _eWireType <> E_ProtoWireType.Fixed64 OR _nPos + 8 > _nLength THEN
+	_bError := TRUE; RETURN;
+END_IF
+MEMCPY(destAddr := ADR(fValue), srcAddr := _pBuffer + _nPos, n := 8);
+_nPos      := _nPos + 8;
+ReadDouble := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadFloat" Id="{f14499c9-84d5-495d-b0fb-d840e1909469}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadFloat : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	fValue 		: REAL;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _eWireType <> E_ProtoWireType.Fixed32 OR _nPos + 4 > _nLength THEN
+	_bError := TRUE; RETURN;
+END_IF
+MEMCPY(destAddr := ADR(fValue), srcAddr := _pBuffer + _nPos, n := 4);
+_nPos     := _nPos + 4;
+ReadFloat := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadUInt32" Id="{36516a37-8666-46f7-8033-74e6b9d1ba75}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadUInt32 : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	nValue 		: UDINT;
+END_VAR
+VAR
+	nRaw		: ULINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _eWireType <> E_ProtoWireType.Varint THEN _bError := TRUE; RETURN; END_IF
+IF readVarintRaw(nValue => nRaw) THEN
+	nValue    	:= ULINT_TO_UDINT(nRaw);
+	ReadUInt32 	:= TRUE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadUInt64" Id="{60dce6e3-2f48-4636-b234-ddb57d431e7c}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadUInt64 : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	nValue 		: ULINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _eWireType <> E_ProtoWireType.Varint THEN _bError := TRUE; RETURN; END_IF
+ReadUInt64 := readVarintRaw(nValue => nValue);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="readVarintRaw" Id="{e757df08-c44e-4390-8435-0f2a28dd0133}">
+      <Declaration><![CDATA[METHOD PRIVATE readVarintRaw : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	nValue 		: ULINT;
+END_VAR
+VAR
+	nByte  		: BYTE;
+	nShift 		: BYTE := 0;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[nValue := 0;
+REPEAT
+	IF _nPos >= _nLength THEN
+		_bError := TRUE;
+		readVarintRaw := FALSE;
+		RETURN;
+	END_IF
+	nByte  := _pBuffer[_nPos];
+	_nPos  := _nPos + 1;
+	nValue := nValue OR SHL(BYTE_TO_ULINT(nByte AND 16#7F), nShift);
+	nShift := nShift + 7;
+UNTIL (nByte AND 16#80) = 0 OR nShift >= 64
+END_REPEAT;
+readVarintRaw := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="Skip" Id="{7e3ead5b-9d29-4228-986f-d8e162a15e10}">
+      <Declaration><![CDATA[METHOD Skip : BOOL
+VAR_INPUT
+END_VAR
+VAR
+	nLen 		: ULINT;
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE _eWireType OF
+	E_ProtoWireType.Varint:
+		Skip := readVarintRaw(nValue=>);  // discard
+	E_ProtoWireType.Fixed32:
+		IF _nPos + 4 <= _nLength THEN _nPos := _nPos + 4; Skip := TRUE; END_IF
+	E_ProtoWireType.Fixed64:
+		IF _nPos + 8 <= _nLength THEN _nPos := _nPos + 8; Skip := TRUE; END_IF
+	E_ProtoWireType.LengthDelimited:
+		IF readVarintRaw(nValue => nLen) THEN
+			_nPos := _nPos + ULINT_TO_UDINT(nLen);
+			Skip  := _nPos <= _nLength;
+		END_IF
+	ELSE
+		_bError := TRUE;
+END_CASE]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="ReadString" Id="{c7d8e9f0-1a2b-3c4d-5e6f-7a8b9c0d1e2f}">
+      <Declaration><![CDATA[METHOD PUBLIC ReadString : BOOL
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	sValue	: STRING(255);
+END_VAR
+VAR
+	pData	: POINTER TO BYTE;
+	nLen	: UDINT;
+	nCopy	: UDINT;
+	pNull	: POINTER TO BYTE;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT ReadBytes(pData => pData, nLen => nLen) THEN RETURN; END_IF
+nCopy := MIN(nLen, 255);
+MEMCPY(destAddr := ADR(sValue), srcAddr := pData, n := nCopy);
+// Write null terminator at the end of the copied content
+pNull  := ADR(sValue) + nCopy;
+pNull^ := 0;
+ReadString := TRUE;]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="WireType" Id="{9da9e298-a1a9-44d0-a57d-5ef2f6a918cb}">
+      <Declaration><![CDATA[PROPERTY WireType : E_ProtoWireType]]></Declaration>
+      <Get Name="Get" Id="{5149b927-2c15-467f-bdd0-7e8aa1d376f5}">
+        <Declaration><![CDATA[VAR
+END_VAR
+]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[WireType := _eWireType;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+  </POU>
+</TcPlcObject>
