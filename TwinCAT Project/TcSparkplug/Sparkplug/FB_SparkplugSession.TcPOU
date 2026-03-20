@@ -18,7 +18,7 @@
 
 // TODO: support for TLS, certs...
 // maybe pass in refrence to MqttClient?
-FUNCTION_BLOCK FB_SparkplugSession
+FUNCTION_BLOCK FB_SparkplugSession IMPLEMENTS I_SparkplugSession
 VAR_INPUT
 	sGroupId		: STRING(127);
 	sNodeId			: STRING(127);
@@ -75,6 +75,11 @@ VAR
 	_nMetricLen		: UDINT;
 	_sMetricName	: STRING(255);
 	_bMetricBool	: BOOL;
+
+	// Registered devices — called on each birth cycle
+	_aDevices		: ARRAY[0..15] OF I_SparkplugDevice;
+	_nDeviceCount	: UDINT;
+	_iDev			: UDINT;
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -144,8 +149,18 @@ E_SparkplugState.Birthing:
 			nPayloadSize := _fbNBirth.Payload.Length,
 			eQos         := TcIotMqttQos.AtLeastOnceDelivery,
 			bRetain      := FALSE);
-		_nSeq            := 1;		// First DBIRTH will use seq=1
-		bBirthRequired   := TRUE;
+		_nSeq := 1;		// First DBIRTH will use seq=1
+
+		// Publish DBIRTH for every registered device (seq=1, 2, ...)
+		IF _nDeviceCount > 0 THEN
+			FOR _iDev := 0 TO _nDeviceCount - 1 DO
+				IF _aDevices[_iDev] <> 0 THEN
+					_aDevices[_iDev].OnBirth();
+				END_IF
+			END_FOR
+		END_IF
+
+		bBirthRequired   := TRUE;	// Signal any external device FBs for one cycle
 		_bBirthSignalled := TRUE;
 
 	ELSE
@@ -335,5 +350,60 @@ END_IF
 ]]></ST>
       </Implementation>
     </Method>
+    <Method Name="IsOnline" Id="{11111111-0000-0000-0000-000000000013}">
+      <Declaration><![CDATA[// Returns TRUE when the session is in the Online state.
+// Implements I_SparkplugSession — avoids naming conflict with the bOnline VAR_OUTPUT.
+METHOD IsOnline : BOOL
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IsOnline := bOnline;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="AddDevice" Id="{11111111-0000-0000-0000-000000000014}">
+      <Declaration><![CDATA[// Registers a device FB with the session.
+// The session will call ipDevice.OnBirth() automatically on every birth cycle.
+// Call once during startup after AddMetric(), before the first birth cycle.
+METHOD AddDevice
+VAR_INPUT
+	sDeviceId	: STRING(127);
+	ipDevice	: I_SparkplugDevice;
+END_VAR
+VAR
+	ipMe	: I_SparkplugSession;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nDeviceCount >= 16 THEN RETURN; END_IF
+
+ipMe := THIS^;
+ipDevice.SetSession(sDeviceId, ipMe);
+_aDevices[_nDeviceCount] := ipDevice;
+_nDeviceCount := _nDeviceCount + 1;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="GroupId" Id="{11111111-0000-0000-0000-000000000020}">
+      <Declaration><![CDATA[// Returns the Sparkplug group ID configured on this session.
+// Device FBs use this to build their own topics without duplicating the group/node at the call site.
+PROPERTY GroupId : STRING(127)]]></Declaration>
+      <Get Name="Get" Id="{11111111-0000-0000-0000-000000000021}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[GroupId := sGroupId;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+    <Property Name="NodeId" Id="{11111111-0000-0000-0000-000000000022}">
+      <Declaration><![CDATA[// Returns the Sparkplug node ID configured on this session.
+// Device FBs use this to build their own topics without duplicating the group/node at the call site.
+PROPERTY NodeId : STRING(127)]]></Declaration>
+      <Get Name="Get" Id="{11111111-0000-0000-0000-000000000023}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[NodeId := sNodeId;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
   </POU>
 </TcPlcObject>

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <Itf Name="I_SparkplugSession" Id="{22222222-0000-0000-0000-000000000001}" SpecialFunc="None">
+    <Declaration><![CDATA[// Interface consumed by device FBs to interact with the Sparkplug session.
+// Decouples device FBs from the concrete FB_SparkplugSession type,
+// enabling testability without a live MQTT connection.
+INTERFACE I_SparkplugSession]]></Declaration>
+
+    <Method Name="GetNextSeq" Id="{22222222-0000-0000-0000-000000000010}">
+      <Declaration><![CDATA[// Returns the current seq counter and advances it (0–255 wrapping).
+// Call once per outbound message to stamp the payload header.
+METHOD GetNextSeq : ULINT
+]]></Declaration>
+    </Method>
+
+    <Method Name="IsOnline" Id="{22222222-0000-0000-0000-000000000011}">
+      <Declaration><![CDATA[// Returns TRUE when the session is in the Online state.
+METHOD IsOnline : BOOL
+]]></Declaration>
+    </Method>
+
+    <Method Name="Publish" Id="{22222222-0000-0000-0000-000000000012}">
+      <Declaration><![CDATA[// Publishes a pre-encoded payload to the broker.
+// Only succeeds when the session is Online or Birthing.
+METHOD Publish : BOOL
+VAR_INPUT
+	sTopic		: STRING(255);
+	pPayload	: POINTER TO BYTE;
+	nLen		: UDINT;
+	nQos		: UDINT;
+	bRetain		: BOOL;
+END_VAR
+]]></Declaration>
+    </Method>
+
+    <Property Name="GroupId" Id="{22222222-0000-0000-0000-000000000020}">
+      <Declaration><![CDATA[// Sparkplug group ID — used by device FBs to build their own topics.
+PROPERTY GroupId : STRING(127)]]></Declaration>
+      <Get Name="Get" Id="{22222222-0000-0000-0000-000000000021}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+      </Get>
+    </Property>
+
+    <Property Name="NodeId" Id="{22222222-0000-0000-0000-000000000022}">
+      <Declaration><![CDATA[// Sparkplug node ID — used by device FBs to build their own topics.
+PROPERTY NodeId : STRING(127)]]></Declaration>
+      <Get Name="Get" Id="{22222222-0000-0000-0000-000000000023}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+      </Get>
+    </Property>
+
+  </Itf>
+</TcPlcObject>

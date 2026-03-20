@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <Itf Name="I_SparkplugDevice" Id="{33333333-0000-0000-0000-000000000001}" SpecialFunc="None">
+    <Declaration><![CDATA[// Interface implemented by device FBs and consumed by FB_SparkplugSession
+// to orchestrate the birth cycle and device lifecycle.
+INTERFACE I_SparkplugDevice]]></Declaration>
+
+    <Method Name="SetSession" Id="{33333333-0000-0000-0000-000000000010}">
+      <Declaration><![CDATA[// Called by the session when the device is registered via AddDevice.
+// The device stores the session reference and device ID for use in OnBirth/PublishData.
+METHOD SetSession
+VAR_INPUT
+	sDeviceId	: STRING(127);
+	ipSession	: I_SparkplugSession;
+END_VAR
+]]></Declaration>
+    </Method>
+
+    <Method Name="OnBirth" Id="{33333333-0000-0000-0000-000000000011}">
+      <Declaration><![CDATA[// Called by the session at the start of each birth cycle, after NBIRTH is sent.
+// The device must encode and publish its DBIRTH using the session's
+// GetNextSeq() and Publish() methods.
+METHOD OnBirth
+]]></Declaration>
+    </Method>
+
+    <Method Name="PublishData" Id="{33333333-0000-0000-0000-000000000012}">
+      <Declaration><![CDATA[// Encodes and publishes a DDATA message using the current metric values.
+// Returns FALSE if the session is not online or the publish fails.
+METHOD PublishData : BOOL
+]]></Declaration>
+    </Method>
+
+    <Method Name="PublishDeath" Id="{33333333-0000-0000-0000-000000000013}">
+      <Declaration><![CDATA[// Publishes a DDEATH for this device, signalling the host that it is offline.
+// Returns FALSE if the session is not online or the publish fails.
+METHOD PublishDeath : BOOL
+]]></Declaration>
+    </Method>
+
+  </Itf>
+</TcPlcObject>

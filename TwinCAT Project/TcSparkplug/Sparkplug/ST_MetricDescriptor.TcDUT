@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <DUT Name="ST_MetricDescriptor" Id="{44444444-0000-0000-0000-000000000001}">
+    <Declaration><![CDATA[// Describes a single metric registered via FB_SparkplugDevice.AddMetric.
+//
+// pValue is a live pointer to the original variable in the caller's scope —
+// it is dereferenced on every encode, so metric values are always current.
+TYPE ST_MetricDescriptor :
+STRUCT
+	sName		: STRING(255);				// metric name (written in BIRTH messages)
+	nAlias		: ULINT;					// alias (written in BIRTH; used alone in DATA)
+	eDataType	: E_SparkplugDataType;		// Sparkplug B type code written in the metric header
+	eTypeClass	: __SYSTEM.TYPE_CLASS;		// IEC type class — determines how pValue is dereferenced
+	pValue		: PVOID;					// pointer to the live variable in the caller's scope
+END_STRUCT
+END_TYPE]]></Declaration>
+  </DUT>
+</TcPlcObject>

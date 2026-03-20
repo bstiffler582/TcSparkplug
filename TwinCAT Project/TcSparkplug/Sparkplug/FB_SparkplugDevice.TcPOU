@@ -1,0 +1,263 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_SparkplugDevice" Id="{55555555-0000-0000-0000-000000000001}" SpecialFunc="None">
+    <Declaration><![CDATA[// Generic Sparkplug B device function block.
+//
+// Register metrics once at startup via AddMetric(), then pass this FB to the
+// session via AddDevice(). The session will call OnBirth() automatically on
+// every birth cycle; the caller decides when to send DDATA by calling PublishData().
+//
+// Usage:
+//   fbDevice.AddMetric('Speed',       1, nMotorSpeed);
+//   fbDevice.AddMetric('Running',     2, bMotorRunning);
+//   fbDevice.AddMetric('Temperature', 3, fMotorTemp);
+//   fbSpkSession.AddDevice('Motor1', fbDevice);
+//   // ...
+//   IF tPublish.Q THEN fbDevice.PublishData(); END_IF
+//
+// AddMetric() stores a live pointer to the caller's variable — do not call it
+// more than once per metric, and ensure the variable outlives this FB.
+FUNCTION_BLOCK FB_SparkplugDevice IMPLEMENTS I_SparkplugDevice
+VAR
+	_aMetrics		: ARRAY[0..15] OF ST_MetricDescriptor;
+	_nMetricCount	: UDINT;
+
+	_sDeviceId		: STRING(127);
+	_ipSession		: I_SparkplugSession;
+
+	_sBirthTopic	: STRING(255);
+	_sDataTopic		: STRING(255);
+	_sDeathTopic	: STRING(255);
+
+	_aBirthBuf		: ARRAY[0..2047] OF BYTE;
+	_aDataBuf		: ARRAY[0..511] OF BYTE;
+	_fbBirthPayload	: FB_SparkplugPayload;
+	_fbDataPayload	: FB_SparkplugPayload;
+	_fbDeath		: FB_DDeathBuilder;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// FB body intentionally empty — all logic is in the methods below.]]></ST>
+    </Implementation>
+    <Method Name="_writeMetrics" Id="{55555555-0000-0000-0000-000000000020}">
+      <Declaration><![CDATA[// Encodes all registered metrics into fbPayload.
+// bBirthMode = TRUE  → writes name + alias (DBIRTH).
+// bBirthMode = FALSE → writes alias only (DDATA — saves bandwidth).
+METHOD PRIVATE _writeMetrics
+VAR_IN_OUT
+	fbPayload	: FB_SparkplugPayload;
+END_VAR
+VAR_INPUT
+	bBirthMode	: BOOL;
+END_VAR
+VAR
+	i		: UDINT;
+	sName	: STRING(255);
+	pBool	: POINTER TO BOOL;
+	pSint	: POINTER TO SINT;
+	pInt	: POINTER TO INT;
+	pDint	: POINTER TO DINT;
+	pLint	: POINTER TO LINT;
+	pUsint	: POINTER TO USINT;
+	pUint	: POINTER TO UINT;
+	pUdint	: POINTER TO UDINT;
+	pUlint	: POINTER TO ULINT;
+	pByte	: POINTER TO BYTE;
+	pWord	: POINTER TO WORD;
+	pDword	: POINTER TO DWORD;
+	pLword	: POINTER TO LWORD;
+	pReal	: POINTER TO REAL;
+	pLreal	: POINTER TO LREAL;
+	pStr	: POINTER TO STRING(255);
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nMetricCount = 0 THEN RETURN; END_IF
+
+FOR i := 0 TO _nMetricCount - 1 DO
+	// In BIRTH mode write the metric name; in DATA mode write alias only.
+	sName := SEL(bBirthMode, '', _aMetrics[i].sName);
+
+	CASE _aMetrics[i].eTypeClass OF
+		__SYSTEM.TYPE_CLASS.TYPE_BOOL:
+			pBool  := _aMetrics[i].pValue;
+			fbPayload.WriteBoolMetric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pBool^);
+
+		__SYSTEM.TYPE_CLASS.TYPE_SINT:
+			pSint  := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pSint^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_INT:
+			pInt   := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pInt^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_DINT:
+			pDint  := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pDint^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_LINT:
+			pLint  := _aMetrics[i].pValue;
+			fbPayload.WriteUInt64Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_ULINT(pLint^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_USINT:
+			pUsint := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pUsint^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_UINT:
+			pUint  := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pUint^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_UDINT:
+			pUdint := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pUdint^);
+
+		__SYSTEM.TYPE_CLASS.TYPE_ULINT:
+			pUlint := _aMetrics[i].pValue;
+			fbPayload.WriteUInt64Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pUlint^);
+
+		__SYSTEM.TYPE_CLASS.TYPE_BYTE:
+			pByte  := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pByte^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_WORD:
+			pWord  := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pWord^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_DWORD:
+			pDword := _aMetrics[i].pValue;
+			fbPayload.WriteUInt32Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_UDINT(pDword^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_LWORD:
+			pLword := _aMetrics[i].pValue;
+			fbPayload.WriteUInt64Metric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, TO_ULINT(pLword^));
+
+		__SYSTEM.TYPE_CLASS.TYPE_REAL:
+			pReal  := _aMetrics[i].pValue;
+			fbPayload.WriteFloatMetric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pReal^);
+
+		__SYSTEM.TYPE_CLASS.TYPE_LREAL:
+			pLreal := _aMetrics[i].pValue;
+			fbPayload.WriteDoubleMetric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pLreal^);
+
+		__SYSTEM.TYPE_CLASS.TYPE_STRING:
+			pStr   := _aMetrics[i].pValue;
+			fbPayload.WriteStringMetric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pStr^);
+	END_CASE
+END_FOR
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="AddMetric" Id="{55555555-0000-0000-0000-000000000010}">
+      <Declaration><![CDATA[// Registers a metric to be included in DBIRTH and DDATA messages.
+// Infers the Sparkplug B data type from the IEC type of value.
+// Call once per metric during startup before AddDevice().
+//
+// Supported types: BOOL, SINT/INT/DINT/LINT, USINT/UINT/UDINT/ULINT,
+//                  BYTE/WORD/DWORD/LWORD, REAL, LREAL, STRING(n)
+METHOD AddMetric
+VAR_INPUT
+	sName	: STRING(255);
+	nAlias	: ULINT;
+	value	: ANY;
+END_VAR
+VAR
+	eDataType	: E_SparkplugDataType;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nMetricCount >= 16 THEN RETURN; END_IF
+
+// Map IEC TypeClass → Sparkplug B data type code
+CASE value.TypeClass OF
+	__SYSTEM.TYPE_CLASS.TYPE_BOOL	: eDataType := E_SparkplugDataType.Boolean;
+	__SYSTEM.TYPE_CLASS.TYPE_SINT	: eDataType := E_SparkplugDataType.Int8;
+	__SYSTEM.TYPE_CLASS.TYPE_INT	: eDataType := E_SparkplugDataType.Int16;
+	__SYSTEM.TYPE_CLASS.TYPE_DINT	: eDataType := E_SparkplugDataType.Int32;
+	__SYSTEM.TYPE_CLASS.TYPE_LINT	: eDataType := E_SparkplugDataType.Int64;
+	__SYSTEM.TYPE_CLASS.TYPE_USINT	: eDataType := E_SparkplugDataType.UInt8;
+	__SYSTEM.TYPE_CLASS.TYPE_UINT	: eDataType := E_SparkplugDataType.UInt16;
+	__SYSTEM.TYPE_CLASS.TYPE_UDINT	: eDataType := E_SparkplugDataType.UInt32;
+	__SYSTEM.TYPE_CLASS.TYPE_ULINT	: eDataType := E_SparkplugDataType.UInt64;
+	__SYSTEM.TYPE_CLASS.TYPE_BYTE	: eDataType := E_SparkplugDataType.UInt8;
+	__SYSTEM.TYPE_CLASS.TYPE_WORD	: eDataType := E_SparkplugDataType.UInt16;
+	__SYSTEM.TYPE_CLASS.TYPE_DWORD	: eDataType := E_SparkplugDataType.UInt32;
+	__SYSTEM.TYPE_CLASS.TYPE_LWORD	: eDataType := E_SparkplugDataType.UInt64;
+	__SYSTEM.TYPE_CLASS.TYPE_REAL	: eDataType := E_SparkplugDataType.Float;
+	__SYSTEM.TYPE_CLASS.TYPE_LREAL	: eDataType := E_SparkplugDataType.Double;
+	__SYSTEM.TYPE_CLASS.TYPE_STRING	: eDataType := E_SparkplugDataType.String_;
+ELSE
+	eDataType := E_SparkplugDataType.Unknown;
+END_CASE
+
+_aMetrics[_nMetricCount].sName		 := sName;
+_aMetrics[_nMetricCount].nAlias		 := nAlias;
+_aMetrics[_nMetricCount].eDataType	 := eDataType;
+_aMetrics[_nMetricCount].eTypeClass  := value.TypeClass;
+_aMetrics[_nMetricCount].pValue		 := value.pValue;
+_nMetricCount := _nMetricCount + 1;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="OnBirth" Id="{55555555-0000-0000-0000-000000000012}">
+      <Declaration><![CDATA[// Called by the session on each birth cycle after NBIRTH is published.
+// Builds topics, encodes the DBIRTH payload, and publishes it.
+METHOD OnBirth
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[// Build topics — GroupId and NodeId are valid once the session has been called at least once.
+_sBirthTopic := F_BuildSparkplugTopic(E_SparkplugMessageType.DBIRTH, _ipSession.GroupId, _ipSession.NodeId, _sDeviceId);
+_sDataTopic  := F_BuildSparkplugTopic(E_SparkplugMessageType.DDATA,  _ipSession.GroupId, _ipSession.NodeId, _sDeviceId);
+_sDeathTopic := F_BuildSparkplugTopic(E_SparkplugMessageType.DDEATH, _ipSession.GroupId, _ipSession.NodeId, _sDeviceId);
+
+_fbBirthPayload.Init(ADR(_aBirthBuf), SIZEOF(_aBirthBuf));
+_fbBirthPayload.WriteHeader(F_GetUnixTimestampMs(), _ipSession.GetNextSeq());
+_writeMetrics(_fbBirthPayload, TRUE);
+_ipSession.Publish(_sBirthTopic, _fbBirthPayload.Buffer, _fbBirthPayload.Length, 1, FALSE);
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="PublishData" Id="{55555555-0000-0000-0000-000000000013}">
+      <Declaration><![CDATA[// Encodes and publishes a DDATA message using the current metric values.
+// Returns FALSE if the session is not online or the publish fails.
+METHOD PublishData : BOOL
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT _ipSession.IsOnline() THEN RETURN; END_IF
+
+_fbDataPayload.Init(ADR(_aDataBuf), SIZEOF(_aDataBuf));
+_fbDataPayload.WriteHeader(F_GetUnixTimestampMs(), _ipSession.GetNextSeq());
+_writeMetrics(_fbDataPayload, FALSE);
+PublishData := _ipSession.Publish(_sDataTopic, _fbDataPayload.Buffer, _fbDataPayload.Length, 1, FALSE);
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="PublishDeath" Id="{55555555-0000-0000-0000-000000000014}">
+      <Declaration><![CDATA[// Publishes a DDEATH for this device, signalling the host that it is offline.
+// Returns FALSE if the session is not online or the publish fails.
+METHOD PublishDeath : BOOL
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT _ipSession.IsOnline() THEN RETURN; END_IF
+
+_fbDeath.Build(F_GetUnixTimestampMs(), _ipSession.GetNextSeq());
+PublishDeath := _ipSession.Publish(_sDeathTopic, _fbDeath.Payload.Buffer, _fbDeath.Payload.Length, 1, FALSE);
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SetSession" Id="{55555555-0000-0000-0000-000000000011}">
+      <Declaration><![CDATA[// Called by FB_SparkplugSession.AddDevice — stores the device ID and session reference.
+// Do not call directly.
+METHOD SetSession
+VAR_INPUT
+	sDeviceId	: STRING(127);
+	ipSession	: I_SparkplugSession;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_sDeviceId := sDeviceId;
+_ipSession := ipSession;
+]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

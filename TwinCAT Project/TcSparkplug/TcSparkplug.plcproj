@@ -59,6 +59,18 @@
     <Compile Include="Sparkplug\FB_SparkplugPayload.TcPOU">
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Sparkplug\FB_SparkplugDevice.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\I_SparkplugSession.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\I_SparkplugDevice.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="Sparkplug\ST_MetricDescriptor.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="Sparkplug\FB_SparkplugSession.TcPOU">
       <SubType>Code</SubType>
     </Compile>
