@@ -65,9 +65,11 @@ METHOD Reset
       <Declaration><![CDATA[// Writes the Payload-level timestamp (field 1) and seq (field 4).
 // Must be the first Write call after Init/Reset.
 //
-// Sparkplug field numbers for Payload:
+// Sparkplug field numbers for Payload (from sparkplug_b.proto):
 //   1 = timestamp (uint64, ms since Unix epoch)
-//   4 = seq       (uint64, 0–255 wrapping)
+//   2 = metrics   (repeated, length-delimited)
+//   3 = seq       (uint64, 0–255 wrapping)
+//   4 = uuid      (string — not used by this library)
 METHOD WriteHeader : BOOL
 VAR_INPUT
 	nTimestamp	: ULINT;
@@ -76,7 +78,7 @@ END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[WriteHeader := _fbPayload.WriteUInt64(1, nTimestamp)
-	AND _fbPayload.WriteUInt64(4, nSeq);]]></ST>
+	AND _fbPayload.WriteUInt64(3, nSeq);]]></ST>
       </Implementation>
     </Method>
 

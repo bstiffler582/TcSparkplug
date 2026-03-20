@@ -15,6 +15,9 @@
 // NOTE: The MQTT client calls (Connect, Subscribe, Publish) target the
 // Beckhoff TF6701 Tc3_IotBase FB_IotMqttClient API. Verify method signatures
 // against your installed TF6701 version if compile errors occur.
+
+// TODO: support for TLS, certs...
+// maybe pass in refrence to MqttClient?
 FUNCTION_BLOCK FB_SparkplugSession
 VAR_INPUT
 	sGroupId		: STRING(127);
@@ -111,10 +114,8 @@ E_SparkplugState.Connecting:
 		eState := E_SparkplugState.Reconnecting;
 
 	ELSIF _fbMqttClient.bConnected THEN
-		// Subscribe to node commands and primary application state
 		_fbMqttClient.ipMessageQueue := _fbMsgQueue;
-		_fbMqttClient.Subscribe(_sNcmdTopic,        1);
-		_fbMqttClient.Subscribe('spBv1.0/STATE/#',  1);
+		_fbMqttClient.Subscribe(_sNcmdTopic, 1);
 		eState := E_SparkplugState.Birthing;
 	END_IF
 
@@ -219,7 +220,6 @@ _fbMqttClient.sHostName 	:= sBrokerHost;
 _fbMqttClient.nHostPort		:= nBrokerPort;
 _fbMqttClient.nKeepAlive	:= nKeepAliveS;
 _fbMqttClient.stWill 		:= _stWill;
-_fbMqttClient.stTLS.bNoServerCertCheck	:= TRUE;
 
 _bConnect := TRUE;
 ]]></ST>
@@ -295,21 +295,17 @@ END_WHILE
     </Method>
     <Method Name="pollMessages" Id="{11111111-0000-0000-0000-000000000011}">
       <Declaration><![CDATA[// Drains the inbound message queue for this cycle.
-// Dispatches NCMD messages to _HandleNcmd; monitors STATE for primary app loss.
+// Dispatches NCMD messages to handleNcmd; all other topics are silently discarded.
 METHOD PRIVATE pollMessages
 ]]></Declaration>
       <Implementation>
-        <ST><![CDATA[// listen for messages
+        <ST><![CDATA[// Drain one message per cycle.
+// The Sparkplug B spec requires the primary application to send NCMD/rebirth
+// to edge nodes after it reconnects, so rebirth is driven by NCMD only.
 IF _fbMsgQueue.nQueuedMessages > 0 AND _fbMsgQueue.Dequeue(_fbMsg) THEN
 	_fbMsg.GetTopic(ADR(_sMsgTopic), 255);
 	IF _sMsgTopic = _sNcmdTopic THEN
 		handleNcmd(_fbMsg.pPayload, _fbMsg.nPayloadSize);
-	ELSIF LEFT(_sMsgTopic, 14) = 'spBv1.0/STATE/' THEN
-		// A STATE=OFFLINE from the primary application means it restarted.
-		// We trigger a rebirth so the host can re-learn our metric set.
-		// Full STATE payload parsing (JSON) is beyond scope here — a
-		// reconnected primary app will issue a rebirth command anyway.
-		_bRebirthPending := TRUE;
 	END_IF
 END_IF
 ]]></ST>

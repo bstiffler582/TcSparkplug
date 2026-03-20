@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_Motor1_Birth" Id="{cc000001-0000-0000-0000-000000000000}" SpecialFunc="None">
+    <Declaration><![CDATA[// Hand-written example of what the protoc code generator would produce
+// for a "Motor1" device DBIRTH message.
+//
+// Metrics (alias is the proto field number, set at schema definition time):
+//   alias 1 — Speed       (UInt32, rpm)
+//   alias 2 — Running     (Boolean)
+//   alias 3 — Temperature (Float, °C)
+//
+// BIRTH messages write both name and alias for every metric so the host
+// can build the alias→name mapping it will use for all subsequent DDATA.
+//
+// Usage:
+//   IF fbSession.bBirthRequired THEN
+//     fbMotor1Birth.Build(F_GetUnixTimestampMs(), fbSession.GetNextSeq(), nSpeed, bRunning, fTemp);
+//     fbSession.Publish(sDbirthTopic, fbMotor1Birth.Buffer, fbMotor1Birth.Length);
+//   END_IF
+FUNCTION_BLOCK FB_Motor1_Birth
+VAR
+	_aBuf		: ARRAY[0..2047] OF BYTE;	// 2 KB — generous for a device metric set
+	_fbPayload	: FB_SparkplugPayload;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// FB body intentionally empty — all logic is in Build().]]></ST>
+    </Implementation>
+
+    <Method Name="Build" Id="{cc000001-0000-0000-0000-000000000001}">
+      <Declaration><![CDATA[// Encodes the full DBIRTH payload with the supplied metric values.
+// nSeq must come from FB_SparkplugSession.GetNextSeq() immediately before publishing.
+METHOD Build : BOOL
+VAR_INPUT
+	nTimestamp		: ULINT;
+	nSeq			: ULINT;
+	nSpeed			: UDINT;
+	bRunning		: BOOL;
+	fTemperature	: REAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[_fbPayload.Init(ADR(_aBuf), SIZEOF(_aBuf));
+_fbPayload.WriteHeader(nTimestamp, nSeq);
+_fbPayload.WriteUInt32Metric('Speed',       1, E_SparkplugDataType.UInt32,  nSpeed);
+_fbPayload.WriteBoolMetric  ('Running',     2, E_SparkplugDataType.Boolean, bRunning);
+_fbPayload.WriteFloatMetric ('Temperature', 3, E_SparkplugDataType.Float,   fTemperature);
+Build := NOT _fbPayload.HasError;
+]]></ST>
+      </Implementation>
+    </Method>
+
+    <Property Name="Buffer" Id="{cc000001-0000-0000-0000-000000000002}">
+      <Declaration><![CDATA[PROPERTY Buffer : POINTER TO BYTE]]></Declaration>
+      <Get Name="Get" Id="{cc000001-0000-0000-0000-000000000003}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Buffer := _fbPayload.Buffer;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+    <Property Name="Length" Id="{cc000001-0000-0000-0000-000000000004}">
+      <Declaration><![CDATA[PROPERTY Length : UDINT]]></Declaration>
+      <Get Name="Get" Id="{cc000001-0000-0000-0000-000000000005}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[Length := _fbPayload.Length;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
+
+  </POU>
+</TcPlcObject>

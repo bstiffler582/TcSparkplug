@@ -136,7 +136,7 @@ F_Assert(
 
 // ════════════════════════════════════════════════════════════════════════════
 // GROUP 3 — FB_NBirthBuilder
-// Expected outer payload: f1=timestamp, f4=seq(0), f2=bdSeq metric, f2=Rebirth metric
+// Expected outer payload: f1=timestamp, f3=seq(0), f2=bdSeq metric, f2=Rebirth metric
 // bdSeq metric inner:    f1=name, f4=datatype, f11=long_value  (no alias: alias=0)
 // Rebirth metric inner:  f1=name, f4=datatype, f14=boolean_value
 // ════════════════════════════════════════════════════════════════════════════
@@ -159,7 +159,7 @@ F_Assert(
 
 fbR.Next(); fbR.ReadUInt64(nValue => nU64);
 F_Assert(
-	bCondition := fbR.FieldNumber = 4 AND nU64 = 0,
+	bCondition := fbR.FieldNumber = 3 AND nU64 = 0,
 	sTestName  := 'T13 NBIRTH seq = 0',
 	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
 
@@ -213,7 +213,7 @@ F_Assert(
 
 // ════════════════════════════════════════════════════════════════════════════
 // GROUP 4 — FB_DDeathBuilder
-// Expected outer payload: f1=timestamp, f4=seq — no metrics follow.
+// Expected outer payload: f1=timestamp, f3=seq — no metrics follow.
 // ════════════════════════════════════════════════════════════════════════════
 
 fbDDeath.Build(nTestTs, nTestSeq);
@@ -227,7 +227,7 @@ F_Assert(
 
 fbR.Next(); fbR.ReadUInt64(nValue => nU64);
 F_Assert(
-	bCondition := fbR.FieldNumber = 4 AND nU64 = nTestSeq,
+	bCondition := fbR.FieldNumber = 3 AND nU64 = nTestSeq,
 	sTestName  := 'T22 DDEATH seq correct',
 	nPass := nPass, nFail := nFail, sFirstFail := sFirstFail);
 
@@ -250,7 +250,7 @@ fbPayload.WriteBoolMetric('Running', 1, E_SparkplugDataType.Boolean, TRUE);
 
 fbR.Init(fbPayload.Buffer, fbPayload.Length);
 fbR.Next(); fbR.Skip();		// f1: timestamp
-fbR.Next(); fbR.Skip();		// f4: seq
+fbR.Next(); fbR.Skip();		// f3: seq
 fbR.Next(); fbR.ReadBytes(pData => pMetric, nLen => nMetricLen);
 
 fbRInner.Init(pMetric, nMetricLen);

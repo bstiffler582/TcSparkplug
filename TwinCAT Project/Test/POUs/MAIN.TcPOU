@@ -3,11 +3,74 @@
   <POU Name="MAIN" Id="{9de1eff4-ff5a-4af7-8ca5-9fc8464e4f9b}" SpecialFunc="None">
     <Declaration><![CDATA[PROGRAM MAIN
 VAR
+	fbSpkSession	: FB_SparkplugSession;
+	nBdSeq			: ULINT;
+	bSpkEnable		: BOOL := TRUE;
+
+	// Motor1 device — hand-written template for generated device FBs
+	fbMotor1Birth	: FB_Motor1_Birth;
+	fbMotor1Data	: FB_Motor1_Data;
+
+	// Topics built once at startup
+	sMotor1BirthTopic	: STRING(255);
+	sMotor1DataTopic	: STRING(255);
+	bTopicsBuilt		: BOOL;
+
+	// Metric values — set manually in watch window during testing
+	nMotorSpeed		: UDINT := 1450;
+	bMotorRunning	: BOOL  := TRUE;
+	fMotorTemp		: REAL  := 23.5;
+
+	// Periodic DDATA — self-resetting timer fires every 5 s
+	tDataInterval	: TON;
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[PRG_ProtoTests();
-PRG_SparkplugPayloadTests();]]></ST>
+      <ST><![CDATA[//PRG_ProtoTests();
+//PRG_SparkplugPayloadTests();
+
+// ── Build topics once ─────────────────────────────────────────────────────────
+IF NOT bTopicsBuilt THEN
+	sMotor1BirthTopic := F_BuildSparkplugTopic(E_SparkplugMessageType.DBIRTH, 'BeckhoffUSA', 'PLC1', 'Motor1');
+	sMotor1DataTopic  := F_BuildSparkplugTopic(E_SparkplugMessageType.DDATA,  'BeckhoffUSA', 'PLC1', 'Motor1');
+	bTopicsBuilt := TRUE;
+END_IF
+
+// ── Session ───────────────────────────────────────────────────────────────────
+fbSpkSession(
+	sGroupId    := 'BeckhoffUSA',
+	sNodeId     := 'PLC1',
+	sBrokerHost := '127.0.0.1',
+	bEnable     := bSpkEnable,
+	nBdSeq      := nBdSeq);
+
+// ── DBIRTH — publish on the birth cycle ──────────────────────────────────────
+// bBirthRequired is TRUE for exactly one cycle after NBIRTH is sent.
+// All device FBs must publish their DBIRTH on this same cycle (seq=1, 2, ...).
+IF fbSpkSession.bBirthRequired THEN
+	fbMotor1Birth.Build(
+		nTimestamp   := F_GetUnixTimestampMs(),
+		nSeq         := fbSpkSession.GetNextSeq(),
+		nSpeed       := nMotorSpeed,
+		bRunning     := bMotorRunning,
+		fTemperature := fMotorTemp);
+	fbSpkSession.Publish(sMotor1BirthTopic, fbMotor1Birth.Buffer, fbMotor1Birth.Length);
+END_IF
+
+// ── DDATA — publish every 5 s while online ───────────────────────────────────
+// Self-resetting: IN goes FALSE on the Q cycle, which resets the timer, which
+// makes IN TRUE again — so the 5 s interval repeats automatically.
+tDataInterval(IN := NOT tDataInterval.Q, PT := T#5S);
+IF tDataInterval.Q AND fbSpkSession.bOnline THEN
+	fbMotor1Data.Build(
+		nTimestamp   := F_GetUnixTimestampMs(),
+		nSeq         := fbSpkSession.GetNextSeq(),
+		nSpeed       := nMotorSpeed,
+		bRunning     := bMotorRunning,
+		fTemperature := fMotorTemp);
+	fbSpkSession.Publish(sMotor1DataTopic, fbMotor1Data.Buffer, fbMotor1Data.Length);
+END_IF
+]]></ST>
     </Implementation>
   </POU>
 </TcPlcObject>
