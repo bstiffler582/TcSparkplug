@@ -1,6 +1,6 @@
 # TcSparkplug
 
-### A Sparkplug B serialization library Beckhoff's TwinCAT PLC
+### A Sparkplug B library for Beckhoff's TwinCAT PLC
 
 TcSparkplug implements the [Sparkplug B](https://sparkplug.eclipse.org/) specification for TwinCAT 3 PLCs. It handles MQTT connection management, the full NBIRTH/NDEATH/DBIRTH/DDATA/DDEATH message lifecycle, protobuf encoding, seq/bdSeq sequencing, and report-by-exception change detection — so application code only needs to describe its data.
 
