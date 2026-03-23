@@ -2,7 +2,7 @@
 
 ### A Sparkplug B serialization library Beckhoff's TwinCAT PLC
 
-TcSparkplug implements the [Sparkplug B](https://sparkplug.eclipse.org/) specification for TwinCAT 3 PLCs. It handles MQTT connection management, the full NBIRTH/NDEATH/DBIRTH/DDATA/DDEATH message lifecycle, protobuf encoding, and seq/bdSeq sequencing — so application code only needs to describe its data and call `PublishData()`.
+TcSparkplug implements the [Sparkplug B](https://sparkplug.eclipse.org/) specification for TwinCAT 3 PLCs. It handles MQTT connection management, the full NBIRTH/NDEATH/DBIRTH/DDATA/DDEATH message lifecycle, protobuf encoding, seq/bdSeq sequencing, and report-by-exception change detection — so application code only needs to describe its data.
 
 **Dependencies:** Beckhoff TF6701 IoT Communication (Tc3_IotBase), TwinCAT 3.1.4026 or later.
 
@@ -39,8 +39,6 @@ END_VAR
 ### 2. Call every cycle
 
 ```pascal
-// ── Must be called every PLC cycle ───────────────────────────────────────────
-
 // Session must run first so GroupId/NodeId are set before AddDevice reads them.
 fbSpkSession(
     sGroupId    := 'PlantA',
@@ -49,7 +47,7 @@ fbSpkSession(
     bEnable     := bSpkEnable,
     nBdSeq      := nBdSeq);
 
-// ── One-time initialisation (first PLC cycle) ─────────────────────────────────
+// ── Initialization ────────────────────────────────────────────────────────────
 
 // Register the metrics you want to publish. The alias number becomes the
 // protobuf field number — keep it stable across firmware versions.
@@ -65,11 +63,17 @@ IF NOT bDeviceInit THEN
     bDeviceInit := TRUE;
 END_IF
 
-// ── Periodic DDATA ────────────────────────────────────────────────────────────
+// ── Cyclic device call (required) ─────────────────────────────────────────────
 
-// Publish updated metric values whenever the application decides to.
-// PublishData() is a no-op if the session is not yet online.
-tDataInterval(IN := NOT tDataInterval.Q, PT := T#5S);
+// Must be called every cycle. Runs change detection and, with bAutoPublish := TRUE,
+// automatically publishes a DDATA containing only the metrics that changed.
+fbMotor1(bAutoPublish := TRUE);
+
+// ── Optional periodic full refresh ────────────────────────────────────────────
+
+// PublishData() with no arguments sends all metrics regardless of change —
+// useful as a keep-alive or belt-and-suspenders refresh.
+tDataInterval(IN := NOT tDataInterval.Q, PT := T#30S);
 IF tDataInterval.Q THEN
     fbMotor1.PublishData();
 END_IF
@@ -92,7 +96,10 @@ PLC cycle
   │     ├─ Online                ← polls inbound NCMD; rebirth on Node Control/Rebirth
   │     └─ Reconnecting          ← 5 s backoff, then retry; bdSeq increments each attempt
   │
-  └─ fbMotor1.PublishData()      ← caller decides when to send DDATA
+  ├─ fbMotor1()                  ← runs change detection every cycle
+  │     └─ bAutoPublish = TRUE   → publishes DDATA with only changed metrics on any change
+  │
+  └─ fbMotor1.PublishData()      ← explicit full publish (e.g. periodic refresh)
 ```
 
 **Sequence numbers** (`seq`, 0–255 wrapping) are managed entirely by the session via `GetNextSeq()`. Device FBs never need to track seq themselves.
@@ -100,6 +107,8 @@ PLC cycle
 **bdSeq** must be declared `RETAIN` in the calling program. It increments on every ungraceful disconnect so the host can detect missed NDEATH messages.
 
 **DBIRTH** is published automatically — the session calls `OnBirth()` on every registered device at the start of each birth cycle (including after reconnects and NCMD rebirth commands). The application does not need to detect or handle birth cycles manually.
+
+**Change detection** runs inside the FB body every cycle. Each metric's live value is compared against its last-published shadow using byte-exact comparison (discrete types) or a configurable deadband (REAL/LREAL). The shadow only advances when a publish succeeds, so `bDataPending` stays TRUE on a failed publish and the data is retried next cycle.
 
 ---
 
@@ -116,6 +125,36 @@ PLC cycle
 | `REAL` | Float |
 | `LREAL` | Double |
 | `STRING(n)` | String |
+
+---
+
+## Report by exception
+
+`FB_SparkplugDevice` tracks each metric independently. When `bAutoPublish := TRUE`, only metrics whose value has changed since the last successful publish are included in the DDATA — not the whole payload.
+
+### Deadband (REAL / LREAL only)
+
+Float metrics support a deadband threshold to suppress noise. Set a device-wide default at init time, or override per metric by alias after `AddMetric`:
+
+```pascal
+// Device-wide default — applied to all REAL/LREAL metrics at AddMetric time
+fbMotor1(bAutoPublish := TRUE, fDefaultDeadband := 0.5);
+
+// Per-metric override — e.g. tighter threshold on a precision sensor
+fbMotor1.SetDeadband(3, 0.1);  // alias 3 = Temperature
+```
+
+A deadband of `0.0` (the default) publishes on any change.
+
+### Publishing modes
+
+| Call | What gets sent |
+|---|---|
+| `fbMotor1(bAutoPublish := TRUE)` | Only changed metrics, automatically |
+| `fbMotor1.PublishData()` | All metrics (full refresh) |
+| `fbMotor1.PublishData(bChangedOnly := TRUE)` | Only changed metrics, on demand |
+
+`bDataPending` is available as a `VAR_OUTPUT` if you prefer to drive the publish decision yourself instead of using `bAutoPublish`.
 
 ---
 

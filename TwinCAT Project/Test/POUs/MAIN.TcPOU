@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <TcPlcObject Version="1.1.0.1">
   <POU Name="MAIN" Id="{9de1eff4-ff5a-4af7-8ca5-9fc8464e4f9b}" SpecialFunc="None">
     <Declaration><![CDATA[PROGRAM MAIN
@@ -16,7 +16,7 @@ VAR
 	bMotorRunning	: BOOL  := TRUE;
 	fMotorTemp		: REAL  := 23.5;
 
-	// Periodic DDATA — fires every 5 s
+	// Periodic DDATA — fires at regular interval
 	tDataInterval	: TON;
 END_VAR
 ]]></Declaration>
@@ -41,8 +41,11 @@ IF NOT bDeviceInit THEN
 	bDeviceInit := TRUE;
 END_IF
 
-// Publish DDATA every 5 s.
-tDataInterval(IN := NOT tDataInterval.Q, PT := T#5S);
+// Cyclic device call — runs change detection and auto-publishes DDATA on any change.
+fbDevice1(bAutoPublish := TRUE);
+
+// Periodic refresh — publishes full DDATA every 30s with optional bChangedOnly flag.
+tDataInterval(IN := NOT tDataInterval.Q, PT := T#30S);
 IF tDataInterval.Q THEN
 	fbDevice1.PublishData();
 END_IF

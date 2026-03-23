@@ -5,6 +5,10 @@
 //
 // pValue is a live pointer to the original variable in the caller's scope —
 // it is dereferenced on every encode, so metric values are always current.
+//
+// aLastValue / sLastString hold the last-published value for change detection.
+// They are updated by FB_SparkplugDevice._syncShadows() after each successful publish.
+// fDeadband applies to REAL and LREAL metrics only; 0.0 means any change triggers a publish.
 TYPE ST_MetricDescriptor :
 STRUCT
 	sName		: STRING(255);				// metric name (written in BIRTH messages)
@@ -12,6 +16,11 @@ STRUCT
 	eDataType	: E_SparkplugDataType;		// Sparkplug B type code written in the metric header
 	eTypeClass	: __SYSTEM.TYPE_CLASS;		// IEC type class — determines how pValue is dereferenced
 	pValue		: PVOID;					// pointer to the live variable in the caller's scope
+	// Change detection shadow — updated on every successful publish
+	aLastValue	: ARRAY[0..7] OF BYTE;		// last-published value for non-string types (max 8 bytes)
+	sLastString	: STRING(255);				// last-published value for STRING metrics
+	fDeadband	: LREAL;					// minimum change to trigger a publish (REAL/LREAL only)
+	bChanged	: BOOL;						// TRUE when live value differs from last-published shadow
 END_STRUCT
 END_TYPE]]></Declaration>
   </DUT>

@@ -17,7 +17,25 @@
 //
 // AddMetric() stores a live pointer to the caller's variable — do not call it
 // more than once per metric, and ensure the variable outlives this FB.
+//
+// Call this FB every PLC cycle. It runs change detection and sets bDataPending
+// when at least one metric's live value differs from its last-published shadow.
+// The caller then decides when to call PublishData() (e.g. on bDataPending rising edge).
 FUNCTION_BLOCK FB_SparkplugDevice IMPLEMENTS I_SparkplugDevice
+VAR_INPUT
+	// Default deadband applied to all REAL and LREAL metrics at AddMetric time.
+	// Per-metric overrides are available via SetDeadband(). 0.0 = any change triggers a publish.
+	fDefaultDeadband	: LREAL := 0.0;
+	// When TRUE the FB publishes DDATA automatically on any detected change.
+	// The caller may still call PublishData() independently (e.g. periodic refresh).
+	bAutoPublish		: BOOL  := FALSE;
+END_VAR
+VAR_OUTPUT
+	// TRUE when at least one metric's live value differs from its last-published shadow.
+	// Recomputed every cycle — if a value changes and reverts before PublishData() is called,
+	// this returns FALSE (correct report-by-exception behaviour).
+	bDataPending		: BOOL;
+END_VAR
 VAR
 	_aMetrics		: ARRAY[0..15] OF ST_MetricDescriptor;
 	_nMetricCount	: UDINT;
@@ -37,7 +55,13 @@ VAR
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[// FB body intentionally empty — all logic is in the methods below.]]></ST>
+      <ST><![CDATA[// Run change detection every cycle once a session is attached.
+IF _ipSession <> 0 THEN
+	_checkChanges();
+	IF bAutoPublish AND bDataPending THEN
+		PublishData(bChangedOnly := TRUE);
+	END_IF
+END_IF]]></ST>
     </Implementation>
     <Method Name="_writeMetrics" Id="{55555555-0000-0000-0000-000000000020}">
       <Declaration><![CDATA[// Encodes all registered metrics into fbPayload.
@@ -48,7 +72,8 @@ VAR_IN_OUT
 	fbPayload	: FB_SparkplugPayload;
 END_VAR
 VAR_INPUT
-	bBirthMode	: BOOL;
+	bBirthMode		: BOOL;
+	bChangedOnly	: BOOL := FALSE;	// when TRUE, skips metrics whose bChanged flag is FALSE
 END_VAR
 VAR
 	i		: UDINT;
@@ -75,6 +100,10 @@ END_VAR
         <ST><![CDATA[IF _nMetricCount = 0 THEN RETURN; END_IF
 
 FOR i := 0 TO _nMetricCount - 1 DO
+	// In changed-only mode skip metrics that haven't changed since last publish.
+	IF bChangedOnly AND NOT _aMetrics[i].bChanged THEN
+		;
+	ELSE
 	// In BIRTH mode write the metric name; in DATA mode write alias only.
 	sName := SEL(bBirthMode, '', _aMetrics[i].sName);
 
@@ -143,6 +172,7 @@ FOR i := 0 TO _nMetricCount - 1 DO
 			pStr   := _aMetrics[i].pValue;
 			fbPayload.WriteStringMetric(sName, _aMetrics[i].nAlias, _aMetrics[i].eDataType, pStr^);
 	END_CASE
+	END_IF
 END_FOR
 ]]></ST>
       </Implementation>
@@ -194,6 +224,14 @@ _aMetrics[_nMetricCount].nAlias		 := nAlias;
 _aMetrics[_nMetricCount].eDataType	 := eDataType;
 _aMetrics[_nMetricCount].eTypeClass  := value.TypeClass;
 _aMetrics[_nMetricCount].pValue		 := value.pValue;
+
+// Apply default deadband to float types; all others use exact-match comparison.
+_aMetrics[_nMetricCount].fDeadband := 0.0;
+IF value.TypeClass = __SYSTEM.TYPE_CLASS.TYPE_REAL
+OR value.TypeClass = __SYSTEM.TYPE_CLASS.TYPE_LREAL THEN
+	_aMetrics[_nMetricCount].fDeadband := fDefaultDeadband;
+END_IF
+
 _nMetricCount := _nMetricCount + 1;
 ]]></ST>
       </Implementation>
@@ -213,21 +251,34 @@ _fbBirthPayload.Init(ADR(_aBirthBuf), SIZEOF(_aBirthBuf));
 _fbBirthPayload.WriteHeader(F_GetUnixTimestampMs(), _ipSession.GetNextSeq());
 _writeMetrics(_fbBirthPayload, TRUE);
 _ipSession.Publish(_sBirthTopic, _fbBirthPayload.Buffer, _fbBirthPayload.Length, 1, FALSE);
+
+// Sync shadows after birth so change detection starts from the just-published values.
+_syncShadows();
 ]]></ST>
       </Implementation>
     </Method>
     <Method Name="PublishData" Id="{55555555-0000-0000-0000-000000000013}">
-      <Declaration><![CDATA[// Encodes and publishes a DDATA message using the current metric values.
+      <Declaration><![CDATA[// Encodes and publishes a DDATA message.
+// bChangedOnly = FALSE (default): sends all metrics — use for periodic refreshes.
+// bChangedOnly = TRUE: sends only metrics whose value has changed since the last publish.
 // Returns FALSE if the session is not online or the publish fails.
 METHOD PublishData : BOOL
+VAR_INPUT
+	bChangedOnly	: BOOL := FALSE;
+END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[IF NOT _ipSession.IsOnline() THEN RETURN; END_IF
 
 _fbDataPayload.Init(ADR(_aDataBuf), SIZEOF(_aDataBuf));
 _fbDataPayload.WriteHeader(F_GetUnixTimestampMs(), _ipSession.GetNextSeq());
-_writeMetrics(_fbDataPayload, FALSE);
+_writeMetrics(_fbDataPayload, FALSE, bChangedOnly);
 PublishData := _ipSession.Publish(_sDataTopic, _fbDataPayload.Buffer, _fbDataPayload.Length, 1, FALSE);
+
+// Sync only the shadows that were written so bChanged stays accurate for any skipped metrics.
+IF PublishData THEN
+	_syncShadows(bChangedOnly);
+END_IF
 ]]></ST>
       </Implementation>
     </Method>
@@ -256,6 +307,143 @@ END_VAR
       <Implementation>
         <ST><![CDATA[_sDeviceId := sDeviceId;
 _ipSession := ipSession;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="_checkChanges" Id="{55555555-0000-0000-0000-000000000030}">
+      <Declaration><![CDATA[// Recomputes bDataPending by comparing each metric's live value against its last-published shadow.
+// Floats use deadband comparison; all other types use byte-exact MEMCMP.
+// The shadow is NOT updated here — only _syncShadows() writes to it.
+METHOD PRIVATE _checkChanges
+VAR
+	i			: UDINT;
+	nSize		: UDINT;
+	pStr		: POINTER TO STRING(255);
+	pReal		: POINTER TO REAL;
+	pLastReal	: POINTER TO REAL;
+	pLreal		: POINTER TO LREAL;
+	pLastLreal	: POINTER TO LREAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[bDataPending := FALSE;
+
+FOR i := 0 TO _nMetricCount - 1 DO
+	_aMetrics[i].bChanged := FALSE;
+
+	CASE _aMetrics[i].eTypeClass OF
+		__SYSTEM.TYPE_CLASS.TYPE_STRING:
+			pStr := _aMetrics[i].pValue;
+			IF pStr^ <> _aMetrics[i].sLastString THEN
+				_aMetrics[i].bChanged := TRUE;
+			END_IF
+
+		__SYSTEM.TYPE_CLASS.TYPE_REAL:
+			pReal		:= _aMetrics[i].pValue;
+			pLastReal	:= ADR(_aMetrics[i].aLastValue);
+			IF ABS(pReal^ - pLastReal^) > TO_REAL(_aMetrics[i].fDeadband) THEN
+				_aMetrics[i].bChanged := TRUE;
+			END_IF
+
+		__SYSTEM.TYPE_CLASS.TYPE_LREAL:
+			pLreal		:= _aMetrics[i].pValue;
+			pLastLreal	:= ADR(_aMetrics[i].aLastValue);
+			IF ABS(pLreal^ - pLastLreal^) > _aMetrics[i].fDeadband THEN
+				_aMetrics[i].bChanged := TRUE;
+			END_IF
+	ELSE
+		nSize := _typeSize(_aMetrics[i].eTypeClass);
+		IF nSize > 0 AND MEMCMP(_aMetrics[i].pValue, ADR(_aMetrics[i].aLastValue), nSize) <> 0 THEN
+			_aMetrics[i].bChanged := TRUE;
+		END_IF
+	END_CASE
+
+	bDataPending := bDataPending OR _aMetrics[i].bChanged;
+END_FOR
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="_typeSize" Id="{55555555-0000-0000-0000-000000000031}">
+      <Declaration><![CDATA[// Returns the byte width of the given IEC type class.
+// Returns 0 for STRING (handled separately) and unknown types.
+METHOD PRIVATE _typeSize : UDINT
+VAR_INPUT
+	eTypeClass	: __SYSTEM.TYPE_CLASS;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[CASE eTypeClass OF
+	__SYSTEM.TYPE_CLASS.TYPE_BOOL,
+	__SYSTEM.TYPE_CLASS.TYPE_SINT,
+	__SYSTEM.TYPE_CLASS.TYPE_USINT,
+	__SYSTEM.TYPE_CLASS.TYPE_BYTE	: _typeSize := 1;
+	__SYSTEM.TYPE_CLASS.TYPE_INT,
+	__SYSTEM.TYPE_CLASS.TYPE_UINT,
+	__SYSTEM.TYPE_CLASS.TYPE_WORD	: _typeSize := 2;
+	__SYSTEM.TYPE_CLASS.TYPE_DINT,
+	__SYSTEM.TYPE_CLASS.TYPE_UDINT,
+	__SYSTEM.TYPE_CLASS.TYPE_DWORD,
+	__SYSTEM.TYPE_CLASS.TYPE_REAL	: _typeSize := 4;
+	__SYSTEM.TYPE_CLASS.TYPE_LINT,
+	__SYSTEM.TYPE_CLASS.TYPE_ULINT,
+	__SYSTEM.TYPE_CLASS.TYPE_LWORD,
+	__SYSTEM.TYPE_CLASS.TYPE_LREAL	: _typeSize := 8;
+ELSE
+	_typeSize := 0; // STRING or unknown — handled separately
+END_CASE
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="_syncShadows" Id="{55555555-0000-0000-0000-000000000032}">
+      <Declaration><![CDATA[// Copies the current live value of every metric into its shadow (last-published record).
+// Called after a confirmed DBIRTH or DDATA publish.
+METHOD PRIVATE _syncShadows
+VAR_INPUT
+	bChangedOnly	: BOOL := FALSE;	// when TRUE, only syncs metrics whose bChanged flag is TRUE
+END_VAR
+VAR
+	i		: UDINT;
+	nSize	: UDINT;
+	pStr	: POINTER TO STRING(255);
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[FOR i := 0 TO _nMetricCount - 1 DO
+	IF bChangedOnly AND NOT _aMetrics[i].bChanged THEN
+		;
+	ELSIF _aMetrics[i].eTypeClass = __SYSTEM.TYPE_CLASS.TYPE_STRING THEN
+		pStr := _aMetrics[i].pValue;
+		_aMetrics[i].sLastString := pStr^;
+	ELSE
+		nSize := _typeSize(_aMetrics[i].eTypeClass);
+		IF nSize > 0 THEN
+			MEMCPY(ADR(_aMetrics[i].aLastValue), _aMetrics[i].pValue, nSize);
+		END_IF
+	END_IF
+END_FOR
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="SetDeadband" Id="{55555555-0000-0000-0000-000000000033}">
+      <Declaration><![CDATA[// Overrides the deadband for a single REAL or LREAL metric identified by its alias.
+// Call after AddMetric() and before the first birth cycle.
+// Has no effect on non-float metrics (their comparison is always byte-exact).
+METHOD SetDeadband
+VAR_INPUT
+	nAlias		: ULINT;
+	fDeadband	: LREAL;
+END_VAR
+VAR
+	i	: UDINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[FOR i := 0 TO _nMetricCount - 1 DO
+	IF _aMetrics[i].nAlias = nAlias THEN
+		_aMetrics[i].fDeadband := fDeadband;
+		RETURN;
+	END_IF
+END_FOR
 ]]></ST>
       </Implementation>
     </Method>
