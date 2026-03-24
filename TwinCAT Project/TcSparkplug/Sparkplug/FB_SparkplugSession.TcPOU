@@ -22,9 +22,7 @@ FUNCTION_BLOCK FB_SparkplugSession IMPLEMENTS I_SparkplugSession
 VAR_INPUT
 	sGroupId		: STRING(127);
 	sNodeId			: STRING(127);
-	sBrokerHost		: STRING(255);
-	nBrokerPort		: UINT := 1883;
-	nKeepAliveS		: UINT := 60;		// MQTT keep-alive, seconds
+	fbMqttClient	: REFERENCE TO FB_IotMqttClient;
 	bEnable			: BOOL;
 END_VAR
 VAR_OUTPUT
@@ -40,8 +38,6 @@ VAR_IN_OUT
 	nBdSeq			: ULINT;
 END_VAR
 VAR
-	_fbMqttClient	: FB_IotMqttClient;
-
 	_fbNDeath		: FB_NDeathBuilder;
 	_fbNBirth		: FB_NBirthBuilder;
 
@@ -83,10 +79,10 @@ VAR
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[_fbMqttClient.Execute(_bConnect);
+      <ST><![CDATA[fbMqttClient.Execute(_bConnect);
 
 bOnline := (eState = E_SparkplugState.Online);
-bError  := _fbMqttClient.bError;
+bError  := fbMqttClient.bError;
 
 // ── State machine ─────────────────────────────────────────────────────────────
 CASE eState OF
@@ -112,21 +108,21 @@ E_SparkplugState.Connecting:
 		_bConnect := FALSE;
 		eState := E_SparkplugState.Idle;
 
-	ELSIF _fbMqttClient.bError THEN
+	ELSIF fbMqttClient.bError THEN
 		sErrorMsg := 'Connect failed';
 		// bdSeq does NOT increment here — the Will was never registered with a broker
 		_tReconnect(IN := FALSE);
 		eState := E_SparkplugState.Reconnecting;
 
-	ELSIF _fbMqttClient.bConnected THEN
-		_fbMqttClient.ipMessageQueue := _fbMsgQueue;
-		_fbMqttClient.Subscribe(_sNcmdTopic, 1);
+	ELSIF fbMqttClient.bConnected THEN
+		fbMqttClient.ipMessageQueue := _fbMsgQueue;
+		fbMqttClient.Subscribe(_sNcmdTopic, 1);
 		eState := E_SparkplugState.Birthing;
 	END_IF
 
 // ─────────────────────────────────────────────────────────────────────────────
 E_SparkplugState.Birthing:
-	IF NOT bEnable OR _fbMqttClient.bError OR NOT _fbMqttClient.bConnected THEN
+	IF NOT bEnable OR fbMqttClient.bError OR NOT fbMqttClient.bConnected THEN
 		// Connection dropped while birthing — Will has been registered so bdSeq must advance
 		nBdSeq := (nBdSeq + 1) MOD 256;
 		_bBirthSignalled := FALSE;
@@ -143,7 +139,7 @@ E_SparkplugState.Birthing:
 		// First half of birth cycle: publish NBIRTH and raise the birth flag
 		_nSeq := 0;
 		_fbNBirth.Build(F_GetUnixTimestampMs(), nBdSeq);
-		_fbMqttClient.Publish(
+		fbMqttClient.Publish(
 			sTopic       := _sNbirthTopic,
 			pPayload     := _fbNBirth.Payload.Buffer,
 			nPayloadSize := _fbNBirth.Payload.Length,
@@ -178,7 +174,7 @@ E_SparkplugState.Online:
 		nBdSeq := (nBdSeq + 1) MOD 256;
 		eState := E_SparkplugState.Idle;
 
-	ELSIF _fbMqttClient.bError OR NOT _fbMqttClient.bConnected THEN
+	ELSIF fbMqttClient.bError OR NOT fbMqttClient.bConnected THEN
 		sErrorMsg := 'Connection lost';
 		nBdSeq    := (nBdSeq + 1) MOD 256;
 		_tReconnect(IN := FALSE);
@@ -213,6 +209,29 @@ END_CASE
 _bLastEnable := bEnable;
 ]]></ST>
     </Implementation>
+    <Method Name="AddDevice" Id="{11111111-0000-0000-0000-000000000014}">
+      <Declaration><![CDATA[// Registers a device FB with the session.
+// The session will call ipDevice.OnBirth() automatically on every birth cycle.
+// Call once during startup after AddMetric(), before the first birth cycle.
+METHOD AddDevice
+VAR_INPUT
+	sDeviceId	: STRING(127);
+	ipDevice	: I_SparkplugDevice;
+END_VAR
+VAR
+	ipMe	: I_SparkplugSession;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF _nDeviceCount >= 16 THEN RETURN; END_IF
+
+ipMe := THIS^;
+ipDevice.SetSession(sDeviceId, ipMe);
+_aDevices[_nDeviceCount] := ipDevice;
+_nDeviceCount := _nDeviceCount + 1;
+]]></ST>
+      </Implementation>
+    </Method>
     <Method Name="beginConnect" Id="{11111111-0000-0000-0000-000000000010}">
       <Declaration><![CDATA[// Builds the NDEATH Will payload from the current nBdSeq, then initiates
 // the MQTT connection. nBdSeq must already be at the correct value for this
@@ -230,11 +249,7 @@ _stWill.nPayloadSize 	:= _fbNDeath.PayloadLength;
 _stWill.eQos         	:= TcIotMqttQos.AtLeastOnceDelivery;
 _stWill.bRetain      	:= FALSE;
 
-// TF6701 FB_IotMqttClient.Connect — verify parameter names against your version.
-_fbMqttClient.sHostName 	:= sBrokerHost;
-_fbMqttClient.nHostPort		:= nBrokerPort;
-_fbMqttClient.nKeepAlive	:= nKeepAliveS;
-_fbMqttClient.stWill 		:= _stWill;
+fbMqttClient.stWill 		:= _stWill;
 
 _bConnect := TRUE;
 ]]></ST>
@@ -251,6 +266,17 @@ _nSeq      := (_nSeq + 1) MOD 256;
 ]]></ST>
       </Implementation>
     </Method>
+    <Property Name="GroupId" Id="{11111111-0000-0000-0000-000000000020}">
+      <Declaration><![CDATA[// Returns the Sparkplug group ID configured on this session.
+// Device FBs use this to build their own topics without duplicating the group/node at the call site.
+PROPERTY GroupId : STRING(127)]]></Declaration>
+      <Get Name="Get" Id="{11111111-0000-0000-0000-000000000021}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[GroupId := sGroupId;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
     <Method Name="handleNcmd" Id="{11111111-0000-0000-0000-000000000012}">
       <Declaration><![CDATA[// Parses an NCMD payload. Sets _bRebirthPending if Node Control/Rebirth = TRUE.
 // All other node commands are ignored here; device DCMDs are handled by device FBs.
@@ -308,6 +334,27 @@ END_WHILE
 ]]></ST>
       </Implementation>
     </Method>
+    <Method Name="IsOnline" Id="{11111111-0000-0000-0000-000000000013}">
+      <Declaration><![CDATA[// Returns TRUE when the session is in the Online state.
+// Implements I_SparkplugSession — avoids naming conflict with the bOnline VAR_OUTPUT.
+METHOD IsOnline : BOOL
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IsOnline := bOnline;
+]]></ST>
+      </Implementation>
+    </Method>
+    <Property Name="NodeId" Id="{11111111-0000-0000-0000-000000000022}">
+      <Declaration><![CDATA[// Returns the Sparkplug node ID configured on this session.
+// Device FBs use this to build their own topics without duplicating the group/node at the call site.
+PROPERTY NodeId : STRING(127)]]></Declaration>
+      <Get Name="Get" Id="{11111111-0000-0000-0000-000000000023}">
+        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
+        <Implementation>
+          <ST><![CDATA[NodeId := sNodeId;]]></ST>
+        </Implementation>
+      </Get>
+    </Property>
     <Method Name="pollMessages" Id="{11111111-0000-0000-0000-000000000011}">
       <Declaration><![CDATA[// Drains the inbound message queue for this cycle.
 // Dispatches NCMD messages to handleNcmd; all other topics are silently discarded.
@@ -340,7 +387,7 @@ END_VAR
 ]]></Declaration>
       <Implementation>
         <ST><![CDATA[IF eState = E_SparkplugState.Online OR eState = E_SparkplugState.Birthing THEN
-	Publish := _fbMqttClient.Publish(
+	Publish := fbMqttClient.Publish(
 		sTopic       := sTopic,
 		pPayload     := pPayload,
 		nPayloadSize := nLen,
@@ -350,60 +397,5 @@ END_IF
 ]]></ST>
       </Implementation>
     </Method>
-    <Method Name="IsOnline" Id="{11111111-0000-0000-0000-000000000013}">
-      <Declaration><![CDATA[// Returns TRUE when the session is in the Online state.
-// Implements I_SparkplugSession — avoids naming conflict with the bOnline VAR_OUTPUT.
-METHOD IsOnline : BOOL
-]]></Declaration>
-      <Implementation>
-        <ST><![CDATA[IsOnline := bOnline;
-]]></ST>
-      </Implementation>
-    </Method>
-    <Method Name="AddDevice" Id="{11111111-0000-0000-0000-000000000014}">
-      <Declaration><![CDATA[// Registers a device FB with the session.
-// The session will call ipDevice.OnBirth() automatically on every birth cycle.
-// Call once during startup after AddMetric(), before the first birth cycle.
-METHOD AddDevice
-VAR_INPUT
-	sDeviceId	: STRING(127);
-	ipDevice	: I_SparkplugDevice;
-END_VAR
-VAR
-	ipMe	: I_SparkplugSession;
-END_VAR
-]]></Declaration>
-      <Implementation>
-        <ST><![CDATA[IF _nDeviceCount >= 16 THEN RETURN; END_IF
-
-ipMe := THIS^;
-ipDevice.SetSession(sDeviceId, ipMe);
-_aDevices[_nDeviceCount] := ipDevice;
-_nDeviceCount := _nDeviceCount + 1;
-]]></ST>
-      </Implementation>
-    </Method>
-    <Property Name="GroupId" Id="{11111111-0000-0000-0000-000000000020}">
-      <Declaration><![CDATA[// Returns the Sparkplug group ID configured on this session.
-// Device FBs use this to build their own topics without duplicating the group/node at the call site.
-PROPERTY GroupId : STRING(127)]]></Declaration>
-      <Get Name="Get" Id="{11111111-0000-0000-0000-000000000021}">
-        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
-        <Implementation>
-          <ST><![CDATA[GroupId := sGroupId;]]></ST>
-        </Implementation>
-      </Get>
-    </Property>
-    <Property Name="NodeId" Id="{11111111-0000-0000-0000-000000000022}">
-      <Declaration><![CDATA[// Returns the Sparkplug node ID configured on this session.
-// Device FBs use this to build their own topics without duplicating the group/node at the call site.
-PROPERTY NodeId : STRING(127)]]></Declaration>
-      <Get Name="Get" Id="{11111111-0000-0000-0000-000000000023}">
-        <Declaration><![CDATA[VAR END_VAR]]></Declaration>
-        <Implementation>
-          <ST><![CDATA[NodeId := sNodeId;]]></ST>
-        </Implementation>
-      </Get>
-    </Property>
   </POU>
 </TcPlcObject>

@@ -3,6 +3,7 @@
   <POU Name="MAIN" Id="{9de1eff4-ff5a-4af7-8ca5-9fc8464e4f9b}" SpecialFunc="None">
     <Declaration><![CDATA[PROGRAM MAIN
 VAR
+	fbMqttClient	: FB_IotMqttClient := (sHostName:='127.0.0.1', nHostPort:= 1883);
 	fbSpkSession	: FB_SparkplugSession;
 	nBdSeq			: ULINT;
 	bSpkEnable		: BOOL := TRUE;
@@ -28,7 +29,7 @@ END_VAR
 fbSpkSession(
 	sGroupId    := 'BeckhoffUSA',
 	sNodeId     := 'PLC1',
-	sBrokerHost := '127.0.0.1',
+	fbMqttClient:= fbMqttClient,
 	bEnable     := bSpkEnable,
 	nBdSeq      := nBdSeq);
 
