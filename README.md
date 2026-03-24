@@ -15,6 +15,9 @@ TcSparkplug implements the [Sparkplug B](https://sparkplug.eclipse.org/) specifi
 ```pascal
 PROGRAM MAIN
 VAR
+    // BYO MQTT client (TF6701)
+    fbMqttClient	: FB_IotMqttClient := (sHostName:='127.0.0.1', nHostPort:= 1883);
+
     // Session manager — handles MQTT connection and Sparkplug lifecycle.
     // nBdSeq MUST be RETAIN so it survives power cycles (Sparkplug B requirement).
     fbSpkSession  : FB_SparkplugSession;
@@ -43,7 +46,7 @@ END_VAR
 fbSpkSession(
     sGroupId    := 'PlantA',
     sNodeId     := 'PLC1',
-    sBrokerHost := '192.168.1.10',
+    fbMqttClient:= fbMqttClient,
     bEnable     := bSpkEnable,
     nBdSeq      := nBdSeq);
 
@@ -71,11 +74,11 @@ fbMotor1(bAutoPublish := TRUE);
 
 // ── Optional periodic full refresh ────────────────────────────────────────────
 
-// PublishData() with no arguments sends all metrics regardless of change —
-// useful as a keep-alive or belt-and-suspenders refresh.
+// PublishData to manually send full / partial payload
 tDataInterval(IN := NOT tDataInterval.Q, PT := T#30S);
 IF tDataInterval.Q THEN
-    fbMotor1.PublishData();
+    fbMotor1.PublishData();         // sends all metrics
+    //fbMotor1.PublishData(TRUE);   // sends metrics with changed values (since last message)
 END_IF
 ```
 
